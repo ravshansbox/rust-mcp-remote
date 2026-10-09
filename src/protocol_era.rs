@@ -289,3 +289,21 @@ pub fn strip_subscription_meta(message: Value) -> Value {
     stripped.insert("params".to_string(), Value::Object(params));
     Value::Object(stripped)
 }
+
+pub const FIRST_MODERN_PROTOCOL_VERSION: &str = "2026-07-28";
+
+pub const SUPPORTED_MODERN_VERSIONS: [&str; 1] = [FIRST_MODERN_PROTOCOL_VERSION];
+
+pub const RETIRED_SUBSCRIBE_RESOURCE: &str = "resources/subscribe";
+pub const RETIRED_UNSUBSCRIBE_RESOURCE: &str = "resources/unsubscribe";
+pub const RETIRED_SET_LOG_LEVEL: &str = "logging/setLevel";
+
+pub fn discover_request(id: &str, identity: &LegacyClientIdentity) -> Value {
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "server/discover",
+        "params": {},
+    });
+    stamp_modern_meta(&request, identity, FIRST_MODERN_PROTOCOL_VERSION)
+}
