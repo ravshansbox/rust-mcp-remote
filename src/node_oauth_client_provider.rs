@@ -113,3 +113,102 @@ pub fn is_token_expired(expires_at: Option<f64>, now_ms: f64) -> bool {
         .filter(|expires_at| *expires_at != 0.0 && !expires_at.is_nan())
         .is_some_and(|expires_at| now_ms >= expires_at - TOKEN_EXPIRY_MARGIN_MS)
 }
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ScopeSources<'a> {
+    pub static_oauth_client_metadata: Option<&'a Value>,
+    pub www_authenticate_scope: Option<&'a str>,
+    pub protected_resource_metadata: Option<&'a Value>,
+    pub client_information: Option<&'a Value>,
+    pub authorization_server_metadata: Option<&'a Value>,
+}
+
+fn non_blank_scope(metadata: Option<&Value>) -> Option<&str> {
+    metadata
+        .and_then(|metadata| metadata.get("scope"))
+        .and_then(Value::as_str)
+        .filter(|scope| !scope.trim().is_empty())
+}
+
+fn joined_scopes(scopes_supported: &[Value]) -> String {
+    scopes_supported
+        .iter()
+        .map(|scope| match scope {
+            Value::String(scope) => scope.clone(),
+            other => other.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub fn requested_scope(sources: &ScopeSources) -> Option<String> {
+    if let Some(scope) = non_blank_scope(sources.static_oauth_client_metadata) {
+        debug_log(
+            "Using scope from staticOAuthClientMetadata",
+            &[json!({ "scope": scope })],
+        );
+        return Some(scope.to_string());
+    }
+
+    if let Some(scope) = sources
+        .www_authenticate_scope
+        .filter(|scope| !scope.trim().is_empty())
+    {
+        debug_log(
+            "Using scope from WWW-Authenticate header",
+            &[json!({ "scope": scope })],
+        );
+        return Some(scope.to_string());
+    }
+
+    if let Some(resource_scopes) = sources
+        .protected_resource_metadata
+        .and_then(|metadata| metadata.get("scopes_supported"))
+        .and_then(Value::as_array)
+    {
+        if resource_scopes.is_empty() {
+            debug_log(
+                "Protected resource advertises no scopes (scopes_supported: []), omitting scope",
+                &[],
+            );
+            return Some(String::new());
+        }
+        let scope = joined_scopes(resource_scopes);
+        debug_log(
+            "Using scopes from Protected Resource Metadata",
+            &[json!({ "scopes_supported": resource_scopes, "scope": scope })],
+        );
+        return Some(scope);
+    }
+
+    if let Some(scope) = non_blank_scope(sources.client_information) {
+        debug_log(
+            "Using scope from client registration response",
+            &[json!({ "scope": scope })],
+        );
+        return Some(scope.to_string());
+    }
+
+    if let Some(auth_scopes) = sources
+        .authorization_server_metadata
+        .and_then(|metadata| metadata.get("scopes_supported"))
+        .and_then(Value::as_array)
+    {
+        if auth_scopes.is_empty() {
+            debug_log(
+                "Authorization server advertises no scopes (scopes_supported: []), omitting scope",
+                &[],
+            );
+            return Some(String::new());
+        }
+        let scope = joined_scopes(auth_scopes);
+        debug_log(
+            "Using scopes from Authorization Server Metadata",
+            &[json!({ "scopes_supported": auth_scopes, "scope": scope })],
+        );
+        return Some(scope);
+    }
+
+    debug_log("No source describes the scope to request", &[]);
+    None
+}
