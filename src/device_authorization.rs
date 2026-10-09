@@ -14,6 +14,50 @@ pub struct FormRequest {
     pub params: Vec<(String, String)>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeviceAuthorizationResponse {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    pub verification_uri_complete: Option<String>,
+    pub expires_in: Option<f64>,
+    pub interval: Option<f64>,
+}
+
+pub fn parse_device_authorization_response(
+    body: &Value,
+) -> Result<DeviceAuthorizationResponse, String> {
+    let required = |name: &str| {
+        body.get(name)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    match (
+        required("device_code"),
+        required("user_code"),
+        required("verification_uri"),
+    ) {
+        (Some(device_code), Some(user_code), Some(verification_uri)) => {
+            Ok(DeviceAuthorizationResponse {
+                device_code,
+                user_code,
+                verification_uri,
+                verification_uri_complete: body
+                    .get("verification_uri_complete")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                expires_in: body.get("expires_in").and_then(Value::as_f64),
+                interval: body.get("interval").and_then(Value::as_f64),
+            })
+        }
+        _ => Err(
+            "The authorization server returned an incomplete device authorization response"
+                .to_string(),
+        ),
+    }
+}
+
 pub fn build_device_authorization_request(
     auth_method: &str,
     client_id: &str,
