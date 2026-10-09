@@ -251,6 +251,67 @@ pub fn parse_network_options_to(
     options
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TransportStrategy {
+    SseOnly,
+    HttpOnly,
+    SseFirst,
+    #[default]
+    HttpFirst,
+}
+
+impl TransportStrategy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TransportStrategy::SseOnly => "sse-only",
+            TransportStrategy::HttpOnly => "http-only",
+            TransportStrategy::SseFirst => "sse-first",
+            TransportStrategy::HttpFirst => "http-first",
+        }
+    }
+}
+
+pub fn parse_transport_strategy_to(
+    console: &mut impl std::io::Write,
+    args: &[String],
+) -> TransportStrategy {
+    let Some(raw) = args
+        .iter()
+        .position(|arg| arg == "--transport")
+        .and_then(|index| args.get(index + 1))
+    else {
+        return TransportStrategy::default();
+    };
+    let strategy = [
+        TransportStrategy::SseOnly,
+        TransportStrategy::HttpOnly,
+        TransportStrategy::SseFirst,
+        TransportStrategy::HttpFirst,
+    ]
+    .into_iter()
+    .find(|strategy| strategy.as_str() == raw);
+    match strategy {
+        Some(strategy) => {
+            log_to(
+                console,
+                &format!("Using transport strategy: {}", strategy.as_str()),
+                &[],
+            );
+            strategy
+        }
+        None => {
+            log_to(
+                console,
+                &format!(
+                    "Warning: Ignoring invalid transport strategy: {raw}. Valid values are: sse-only, http-only, sse-first, http-first"
+                ),
+                &[],
+            );
+            TransportStrategy::default()
+        }
+    }
+}
+
 fn javascript_number(raw: &str) -> f64 {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
