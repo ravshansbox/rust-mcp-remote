@@ -262,7 +262,7 @@ pub fn parse_seconds_option_to(
     Some((seconds * 1000.0).round() as u64)
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct NetworkOptions {
     pub connect_timeout_ms: Option<u64>,
     pub body_timeout_ms: Option<u64>,
@@ -1163,4 +1163,131 @@ pub fn parse_json_with_env_vars(raw: &str, context: &str) -> Result<serde_json::
         };
         format!("Could not parse the {context} as JSON{suffix}")
     })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CommandLineArgs {
+    pub server_url: String,
+    pub callback_path: String,
+    pub callback_port: u16,
+    pub specified_port: Option<u16>,
+    pub headers: Vec<(String, String)>,
+    pub transport_strategy: TransportStrategy,
+    pub host: String,
+    pub debug: bool,
+    pub static_oauth_client_metadata: Option<serde_json::Value>,
+    pub static_oauth_client_info: Option<serde_json::Value>,
+    pub client_metadata_url: Option<String>,
+    pub use_id_token: bool,
+    pub use_device_code: bool,
+    pub use_client_credentials: bool,
+    pub token_endpoint: Option<String>,
+    pub authorize_resource: Option<String>,
+    pub skip_resource_parameter: bool,
+    pub authorize_params: BTreeMap<String, String>,
+    pub ignored_tools: Vec<String>,
+    pub auth_timeout_ms: u64,
+    pub server_url_hash: String,
+    pub keep_alive: KeepAliveConfig,
+    pub protocol_mode: crate::protocol_era::ProtocolMode,
+    pub network_options: NetworkOptions,
+    pub enable_proxy: bool,
+    pub cookies_enabled: bool,
+    pub non_interactive_flow: bool,
+}
+
+fn parse_specified_port(value: &str) -> Option<u16> {
+    let trimmed = value.trim_start_matches(is_javascript_whitespace);
+    let digits: String = trimmed
+        .strip_prefix('+')
+        .unwrap_or(trimmed)
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    digits.parse().ok()
+}
+
+pub fn parse_command_line_args_to(
+    console: &mut impl std::io::Write,
+    mut args: Vec<String>,
+    usage: &str,
+) -> Result<Option<CommandLineArgs>, String> {
+    let headers = extract_header_args_to(console, &mut args)?;
+    let server_url = args.first().cloned();
+    let specified_port = args.get(1).and_then(|value| parse_specified_port(value));
+    let allow_http = args.iter().any(|arg| arg == "--allow-http");
+    let debug = parse_debug_and_silent_flags_to(console, &args);
+    let network_options = parse_network_options_to(console, &args);
+    let enable_proxy = parse_enable_proxy_to(console, &args);
+    let keep_alive = parse_keep_alive_to(console, &args);
+    let transport_strategy = parse_transport_strategy_to(console, &args);
+    let protocol_mode = parse_protocol_mode_to(console, &args);
+    let host = parse_callback_host_to(console, &args);
+    let callback_path = parse_callback_path_to(console, &args);
+    let static_oauth_client_metadata = parse_static_oauth_client_metadata_to(console, &args)?;
+    let static_oauth_client_info = parse_static_oauth_client_info_to(console, &args)?;
+    let client_metadata_url = parse_client_metadata_url_to(console, &args);
+    let cookies_enabled = parse_cookies_enabled_to(console, &args);
+    let use_device_code = parse_device_code_to(console, &args);
+    let use_client_credentials = parse_client_credentials_to(console, &args);
+    let token_endpoint = parse_token_endpoint_to(console, &args, use_client_credentials)?;
+    let non_interactive_flow = use_device_code || use_client_credentials;
+    let use_id_token = parse_use_id_token_to(console, &args);
+    let (authorize_resource, skip_resource_parameter) = parse_resource_to(console, &args)?;
+    let authorize_params = parse_authorize_params_to(console, &args)?;
+    log_authorize_param_keys_to(console, &args);
+    let ignored_tools = parse_ignored_tools_to(console, &mut args);
+    let auth_timeout_ms = parse_auth_timeout_to(console, &args);
+    if !validate_server_url_to(console, server_url.as_deref(), allow_http, usage)? {
+        return Ok(None);
+    }
+    let server_url = server_url.unwrap_or_default();
+    let server_url_hash = get_server_url_hash(
+        &server_url,
+        authorize_resource.as_deref(),
+        &headers.iter().cloned().collect(),
+        &authorize_params,
+        client_metadata_url.as_deref(),
+        token_endpoint.as_deref(),
+    );
+    announce_server_url_to(console, &server_url, &server_url_hash);
+    let default_port = calculate_default_port(&server_url_hash).unwrap_or_default();
+    let callback_port = select_callback_port_to(console, specified_port, default_port);
+    if static_oauth_client_info.is_none() {
+        invalidate_mismatched_client_registration_to(
+            console,
+            &server_url_hash,
+            &build_redirect_url(&host, callback_port, &callback_path),
+        );
+    }
+    let headers = finalise_headers_to(console, headers);
+    Ok(Some(CommandLineArgs {
+        server_url,
+        callback_path,
+        callback_port,
+        specified_port,
+        headers,
+        transport_strategy,
+        host,
+        debug,
+        static_oauth_client_metadata,
+        static_oauth_client_info,
+        client_metadata_url,
+        use_id_token,
+        use_device_code,
+        use_client_credentials,
+        token_endpoint,
+        authorize_resource,
+        skip_resource_parameter,
+        authorize_params,
+        ignored_tools,
+        auth_timeout_ms,
+        server_url_hash,
+        keep_alive,
+        protocol_mode,
+        network_options,
+        enable_proxy,
+        cookies_enabled,
+        non_interactive_flow,
+    }))
 }
