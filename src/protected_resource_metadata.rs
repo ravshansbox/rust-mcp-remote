@@ -104,3 +104,22 @@ fn match_param(text: &str, start: usize) -> Option<(&str, &str, usize)> {
     }
     Some((key, &text[value_start..value_end], value_end))
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct ProtectedResourceMetadata {
+    pub resource: String,
+    pub authorization_servers: Option<Vec<String>>,
+    pub scopes_supported: Option<Vec<String>>,
+    pub bearer_methods_supported: Option<Vec<String>>,
+    pub resource_signing_alg_values_supported: Option<Vec<String>>,
+    pub resource_documentation: Option<String>,
+    pub resource_name: Option<String>,
+}
+
+pub fn get_authorization_server_url(metadata: &ProtectedResourceMetadata) -> Option<&str> {
+    metadata
+        .authorization_servers
+        .as_ref()?
+        .first()
+        .map(String::as_str)
+}
