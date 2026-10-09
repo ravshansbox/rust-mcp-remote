@@ -1,8 +1,18 @@
+use std::collections::BTreeMap;
+
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 
 const BASE64_SENTINEL_PREFIX: &str = "=?base64?";
 const BASE64_SENTINEL_SUFFIX: &str = "?=";
+const RESERVED_AUTHORIZE_PARAMS: [&str; 6] = [
+    "client_id",
+    "redirect_uri",
+    "response_type",
+    "state",
+    "code_challenge",
+    "code_challenge_method",
+];
 
 pub fn encode_mcp_header_value(value: &str) -> String {
     let visible = |byte: &u8| (0x21..=0x7e).contains(byte);
@@ -33,6 +43,31 @@ pub fn calculate_default_port(server_url_hash: &str) -> Option<u16> {
         .collect();
     let offset = u16::from_str_radix(&hex_prefix, 16).ok()?;
     Some(3335 + offset % 45816)
+}
+
+pub fn parse_authorize_params(args: &[String]) -> Result<BTreeMap<String, String>, String> {
+    let mut params = BTreeMap::new();
+    for pair in args.windows(2) {
+        if pair[0] != "--authorize-param" {
+            continue;
+        }
+        let raw = &pair[1];
+        let (key, value) = match raw.split_once('=') {
+            Some((key, value)) if !key.is_empty() => (key.trim(), value),
+            _ => {
+                return Err(format!(
+                    "Invalid --authorize-param value: \"{raw}\". Expected key=value, e.g. --authorize-param audience=https://api.example.com"
+                ));
+            }
+        };
+        if RESERVED_AUTHORIZE_PARAMS.contains(&key) {
+            return Err(format!(
+                "--authorize-param cannot set \"{key}\": it is part of the authorization flow itself and is derived per request."
+            ));
+        }
+        params.insert(key.to_string(), value.to_string());
+    }
+    Ok(params)
 }
 
 pub fn parse_seconds_option(args: &[String], flag: &str, allow_zero: bool) -> Option<u64> {
