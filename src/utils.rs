@@ -974,6 +974,19 @@ pub fn validate_server_url_to(
     Ok(true)
 }
 
+pub fn announce_server_url_to(
+    console: &mut impl std::io::Write,
+    server_url: &str,
+    server_url_hash: &str,
+) {
+    crate::logging::set_current_server_url_hash(Some(server_url_hash.to_string()));
+    crate::logging::debug_log_to(
+        console,
+        &format!("Starting mcp-remote with server URL: {server_url}"),
+        &[],
+    );
+}
+
 pub fn get_server_url_hash(
     server_url: &str,
     authorize_resource: Option<&str>,
