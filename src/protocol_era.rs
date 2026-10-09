@@ -308,6 +308,22 @@ pub fn discover_request(id: &str, identity: &LegacyClientIdentity) -> Value {
     stamp_modern_meta(&request, identity, FIRST_MODERN_PROTOCOL_VERSION)
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ProtocolMode {
+    #[default]
+    Legacy,
+    Auto,
+}
+
+impl ProtocolMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProtocolMode::Legacy => "legacy",
+            ProtocolMode::Auto => "auto",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum EraVerdict {
     Legacy { reason: String },

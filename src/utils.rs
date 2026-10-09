@@ -312,6 +312,43 @@ pub fn parse_transport_strategy_to(
     }
 }
 
+pub fn parse_protocol_mode_to(
+    console: &mut impl std::io::Write,
+    args: &[String],
+) -> crate::protocol_era::ProtocolMode {
+    use crate::protocol_era::ProtocolMode;
+    let Some(raw) = args
+        .iter()
+        .position(|arg| arg == "--protocol")
+        .and_then(|index| args.get(index + 1))
+    else {
+        return ProtocolMode::default();
+    };
+    match [ProtocolMode::Legacy, ProtocolMode::Auto]
+        .into_iter()
+        .find(|mode| mode.as_str() == raw)
+    {
+        Some(mode) => {
+            log_to(
+                console,
+                &format!("Using protocol mode: {}", mode.as_str()),
+                &[],
+            );
+            mode
+        }
+        None => {
+            log_to(
+                console,
+                &format!(
+                    "Warning: Ignoring invalid protocol mode: {raw}. Valid values are: legacy, auto"
+                ),
+                &[],
+            );
+            ProtocolMode::default()
+        }
+    }
+}
+
 fn javascript_number(raw: &str) -> f64 {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
