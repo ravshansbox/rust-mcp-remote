@@ -16,3 +16,91 @@ pub fn build_protected_resource_metadata_urls(
     urls.push(format!("{origin}{PROTECTED_RESOURCE_PATH}"));
     Ok(urls)
 }
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct WwwAuthenticateParams {
+    pub resource_metadata_url: Option<String>,
+    pub scope: Option<String>,
+    pub error: Option<String>,
+    pub error_description: Option<String>,
+}
+
+pub fn parse_www_authenticate_header(header: &str) -> WwwAuthenticateParams {
+    let mut result = WwwAuthenticateParams::default();
+    let param_string = strip_bearer_prefix(header);
+    let bytes = param_string.as_bytes();
+
+    let mut position = 0;
+    while position < bytes.len() {
+        match match_param(param_string, position) {
+            Some((key, value, end)) => {
+                let field = match key {
+                    "resource_metadata" => Some(&mut result.resource_metadata_url),
+                    "scope" => Some(&mut result.scope),
+                    "error" => Some(&mut result.error),
+                    "error_description" => Some(&mut result.error_description),
+                    _ => None,
+                };
+                if let Some(field) = field {
+                    *field = Some(value.to_string());
+                }
+                position = end;
+            }
+            None => position += 1,
+        }
+    }
+    result
+}
+
+fn strip_bearer_prefix(header: &str) -> &str {
+    let Some(prefix) = header.get(..6) else {
+        return header;
+    };
+    if !prefix.eq_ignore_ascii_case("Bearer") {
+        return header;
+    }
+    let rest = &header[6..];
+    let trimmed = rest.trim_start();
+    if trimmed.len() == rest.len() {
+        header
+    } else {
+        trimmed
+    }
+}
+
+fn is_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+fn match_param(text: &str, start: usize) -> Option<(&str, &str, usize)> {
+    let bytes = text.as_bytes();
+    let key_end = start
+        + bytes[start..]
+            .iter()
+            .take_while(|&&byte| is_word_byte(byte))
+            .count();
+    if key_end == start || bytes.get(key_end) != Some(&b'=') {
+        return None;
+    }
+    let key = &text[start..key_end];
+    let value_start = key_end + 1;
+
+    if bytes.get(value_start) == Some(&b'"')
+        && let Some(length) = bytes[value_start + 1..]
+            .iter()
+            .position(|&byte| byte == b'"')
+    {
+        let value_end = value_start + 1 + length;
+        return Some((key, &text[value_start + 1..value_end], value_end + 1));
+    }
+
+    let value_end = value_start
+        + bytes[value_start..]
+            .iter()
+            .take_while(|&&byte| is_word_byte(byte) || byte == b'-')
+            .count();
+    if value_end == value_start {
+        return None;
+    }
+    Some((key, &text[value_start..value_end], value_end))
+}
