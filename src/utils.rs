@@ -689,6 +689,46 @@ pub fn parse_client_metadata_url_to(
     }
 }
 
+fn parse_flag_to(
+    console: &mut impl std::io::Write,
+    args: &[String],
+    flag: &str,
+    message: &str,
+) -> bool {
+    let present = args.iter().any(|arg| arg == flag);
+    if present {
+        log_to(console, message, &[]);
+    }
+    present
+}
+
+pub fn parse_cookies_enabled_to(console: &mut impl std::io::Write, args: &[String]) -> bool {
+    !parse_flag_to(
+        console,
+        args,
+        "--disable-cookies",
+        "Cookies disabled; requests will not carry session stickiness",
+    )
+}
+
+pub fn parse_device_code_to(console: &mut impl std::io::Write, args: &[String]) -> bool {
+    parse_flag_to(
+        console,
+        args,
+        "--device-code",
+        "Using the OAuth device grant; no browser will be opened on this machine",
+    )
+}
+
+pub fn parse_client_credentials_to(console: &mut impl std::io::Write, args: &[String]) -> bool {
+    parse_flag_to(
+        console,
+        args,
+        "--client-credentials",
+        "Using the OAuth client_credentials grant; no browser will be opened and no user will be asked",
+    )
+}
+
 pub fn get_server_url_hash(
     server_url: &str,
     authorize_resource: Option<&str>,
