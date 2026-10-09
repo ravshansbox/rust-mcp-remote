@@ -100,3 +100,50 @@ fn javascript_number(raw: &str) -> f64 {
     }
     trimmed.parse().unwrap_or(f64::NAN)
 }
+
+pub fn should_include_tool(ignore_patterns: &[String], tool_name: &str) -> bool {
+    !ignore_patterns
+        .iter()
+        .any(|pattern| glob_matches(pattern, tool_name))
+}
+
+fn glob_matches(pattern: &str, text: &str) -> bool {
+    let pattern: Vec<Option<char>> = pattern
+        .chars()
+        .map(|character| (character != '*').then(|| javascript_canonical_case(character)))
+        .collect();
+    let text: Vec<char> = text.chars().map(javascript_canonical_case).collect();
+    let mut matched = vec![false; text.len() + 1];
+    matched[0] = true;
+    for token in pattern {
+        let mut next = vec![false; text.len() + 1];
+        match token {
+            None => {
+                next[0] = matched[0];
+                for index in 0..text.len() {
+                    next[index + 1] =
+                        matched[index + 1] || (next[index] && !is_line_terminator(text[index]));
+                }
+            }
+            Some(expected) => {
+                for index in 0..text.len() {
+                    next[index + 1] = matched[index] && text[index] == expected;
+                }
+            }
+        }
+        matched = next;
+    }
+    matched[text.len()]
+}
+
+fn is_line_terminator(character: char) -> bool {
+    matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}')
+}
+
+fn javascript_canonical_case(character: char) -> char {
+    let mut upper = character.to_uppercase();
+    match (upper.next(), upper.next()) {
+        (Some(single), None) if character.is_ascii() || !single.is_ascii() => single,
+        _ => character,
+    }
+}
