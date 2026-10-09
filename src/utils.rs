@@ -174,3 +174,16 @@ fn javascript_canonical_case(character: char) -> char {
         _ => character,
     }
 }
+
+pub fn merge_headers(sources: &[&[(&str, &str)]]) -> Vec<(String, String)> {
+    let mut merged: Vec<(String, (String, String))> = Vec::new();
+    for (name, value) in sources.iter().flat_map(|source| source.iter()) {
+        let key = name.to_lowercase();
+        let entry = (name.to_string(), value.to_string());
+        match merged.iter_mut().find(|(existing, _)| *existing == key) {
+            Some((_, slot)) => *slot = entry,
+            None => merged.push((key, entry)),
+        }
+    }
+    merged.into_iter().map(|(_, entry)| entry).collect()
+}
