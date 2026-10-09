@@ -199,6 +199,58 @@ pub fn parse_seconds_option_to(
     Some((seconds * 1000.0).round() as u64)
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct NetworkOptions {
+    pub connect_timeout_ms: Option<u64>,
+    pub body_timeout_ms: Option<u64>,
+    pub headers_timeout_ms: Option<u64>,
+    pub force_ipv4: bool,
+}
+
+pub fn parse_network_options_to(
+    console: &mut impl std::io::Write,
+    args: &[String],
+) -> NetworkOptions {
+    let options = NetworkOptions {
+        connect_timeout_ms: parse_seconds_option_to(console, args, "--connect-timeout", false),
+        body_timeout_ms: parse_seconds_option_to(console, args, "--body-timeout", true),
+        headers_timeout_ms: parse_seconds_option_to(console, args, "--headers-timeout", true),
+        force_ipv4: args.iter().any(|arg| arg == "--ipv4"),
+    };
+    let describe = |milliseconds: u64| match milliseconds {
+        0 => "disabled".to_string(),
+        _ => format!("{} seconds", milliseconds as f64 / 1000.0),
+    };
+    if options.force_ipv4 {
+        log_to(console, "Restricting connections to IPv4", &[]);
+    }
+    if let Some(milliseconds) = options.connect_timeout_ms {
+        log_to(
+            console,
+            &format!(
+                "Using connect timeout: {} seconds",
+                milliseconds as f64 / 1000.0
+            ),
+            &[],
+        );
+    }
+    if let Some(milliseconds) = options.body_timeout_ms {
+        log_to(
+            console,
+            &format!("Using body timeout: {}", describe(milliseconds)),
+            &[],
+        );
+    }
+    if let Some(milliseconds) = options.headers_timeout_ms {
+        log_to(
+            console,
+            &format!("Using headers timeout: {}", describe(milliseconds)),
+            &[],
+        );
+    }
+    options
+}
+
 fn javascript_number(raw: &str) -> f64 {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
