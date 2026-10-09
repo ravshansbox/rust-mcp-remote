@@ -17,6 +17,8 @@ const URL_SAFE_ANY_PADDING: GeneralPurpose = GeneralPurpose::new(
     GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
 );
 
+const CODE_VERIFIER_PREFIX: &str = "code_verifier_";
+
 const FALLBACK_SCOPE: &str = "openid email profile";
 
 const TOKEN_ENDPOINT_AUTH_METHOD_PREFERENCE: [&str; 3] =
@@ -422,6 +424,20 @@ pub fn grant_types(use_client_credentials: bool, use_device_code: bool) -> Vec<&
         return vec![DEVICE_CODE_GRANT_TYPE, "refresh_token"];
     }
     vec!["authorization_code", "refresh_token"]
+}
+
+pub fn owns_pending_flow(authorization_url: &Url, pending_challenge: Option<&str>) -> bool {
+    let Some(challenge) = pending_challenge else {
+        return true;
+    };
+    authorization_url
+        .query_pairs()
+        .find(|(key, _)| key == "code_challenge")
+        .is_some_and(|(_, value)| value == challenge)
+}
+
+pub fn code_verifier_file(state: &str) -> String {
+    format!("{CODE_VERIFIER_PREFIX}{state}.txt")
 }
 
 pub fn apply_authorize_params(
