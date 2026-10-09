@@ -2,6 +2,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 const CONFIG_STORE_VERSION: u32 = 1;
@@ -28,6 +29,12 @@ fn write_owner_only(path: &Path, contents: &str) -> std::io::Result<()> {
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
     options.open(path)?.write_all(contents.as_bytes())
+}
+
+pub fn read_json_file<T: DeserializeOwned>(server_url_hash: &str, filename: &str) -> Option<T> {
+    ensure_config_dir().ok()?;
+    let content = std::fs::read_to_string(config_file_path(server_url_hash, filename)).ok()?;
+    serde_json::from_str(&content).ok()
 }
 
 pub fn write_json_file(server_url_hash: &str, filename: &str, data: &Value) -> std::io::Result<()> {
