@@ -458,6 +458,41 @@ pub fn grant_types(use_client_credentials: bool, use_device_code: bool) -> Vec<&
     vec!["authorization_code", "refresh_token"]
 }
 
+pub struct ClientMetadataSources<'a> {
+    pub redirect_url: Option<&'a str>,
+    pub token_endpoint_auth_method: &'a str,
+    pub grant_types: Vec<&'a str>,
+    pub client_name: &'a str,
+    pub client_uri: &'a str,
+    pub software_id: &'a str,
+    pub software_version: &'a str,
+    pub static_oauth_client_metadata: Option<&'a Value>,
+    pub effective_scope: &'a str,
+}
+
+pub fn client_metadata(sources: &ClientMetadataSources) -> Value {
+    let mut metadata = json!({
+        "redirect_uris": sources.redirect_url.into_iter().collect::<Vec<_>>(),
+        "token_endpoint_auth_method": sources.token_endpoint_auth_method,
+        "grant_types": sources.grant_types,
+        "response_types": ["code"],
+        "client_name": sources.client_name,
+        "client_uri": sources.client_uri,
+        "software_id": sources.software_id,
+        "software_version": sources.software_version,
+    });
+    let fields = metadata.as_object_mut().expect("metadata is an object");
+    if let Some(Value::Object(static_metadata)) = sources.static_oauth_client_metadata {
+        for (key, value) in static_metadata {
+            fields.insert(key.clone(), value.clone());
+        }
+    }
+    if !sources.effective_scope.is_empty() {
+        fields.insert("scope".to_string(), json!(sources.effective_scope));
+    }
+    metadata
+}
+
 pub fn owns_pending_flow(authorization_url: &Url, pending_challenge: Option<&str>) -> bool {
     let Some(challenge) = pending_challenge else {
         return true;
