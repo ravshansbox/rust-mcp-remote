@@ -6,6 +6,7 @@ use base64::engine::DecodePaddingMode;
 use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig, URL_SAFE_NO_PAD};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use url::Url;
 
 use crate::logging::{debug_log, log};
 use crate::mcp_auth_config::{read_config_lease, read_json_file};
@@ -387,4 +388,74 @@ pub fn tokens_to_save(tokens: &Value, effective_scope: &str, now_ms: f64) -> Val
     };
     saved.insert("requested_scope".into(), json!(effective_scope));
     Value::Object(saved)
+}
+
+fn set_search_param(url: &mut Url, key: &str, value: &str) {
+    let mut found = false;
+    let pairs: Vec<(String, String)> = url
+        .query_pairs()
+        .into_owned()
+        .filter_map(|(name, existing)| {
+            if name != key {
+                return Some((name, existing));
+            }
+            if found {
+                return None;
+            }
+            found = true;
+            Some((name, value.to_string()))
+        })
+        .collect();
+    let mut serializer = url.query_pairs_mut();
+    serializer.clear().extend_pairs(&pairs);
+    if !found {
+        serializer.append_pair(key, value);
+    }
+}
+
+pub fn apply_scope(
+    authorization_url: &mut Url,
+    sources: &ScopeSources,
+    has_explicit_token_endpoint: bool,
+) {
+    let effective_scope = effective_scope(sources, has_explicit_token_endpoint);
+    let requested = authorization_url
+        .query_pairs()
+        .find(|(name, _)| name == "scope")
+        .map(|(_, scope)| scope.into_owned());
+    let pinned_by_user = non_blank_scope(sources.static_oauth_client_metadata).is_some();
+    let resource_scopes = sources
+        .protected_resource_metadata
+        .and_then(|metadata| metadata.get("scopes_supported"))
+        .and_then(Value::as_array)
+        .map(|scopes| joined_scopes(scopes));
+
+    if let Some(requested) = requested.filter(|requested| !requested.is_empty())
+        && !pinned_by_user
+        && requested != effective_scope
+        && resource_scopes.as_deref() != Some(requested.as_str())
+    {
+        log(
+            &format!("Authorizing with the scope the server asked for: {requested}"),
+            &[],
+        );
+        debug_log(
+            "Keeping a scope this client did not supply",
+            &[json!({ "scope": requested, "effectiveScope": effective_scope })],
+        );
+        return;
+    }
+
+    if effective_scope.is_empty() {
+        debug_log(
+            "Omitting scope parameter from authorization URL (no effective scope)",
+            &[],
+        );
+    } else {
+        set_search_param(authorization_url, "scope", &effective_scope);
+        debug_log(
+            "Added scope parameter to authorization URL",
+            &[json!({ "scopes": effective_scope })],
+        );
+    }
 }
