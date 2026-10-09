@@ -12,6 +12,8 @@ const URL_SAFE_ANY_PADDING: GeneralPurpose = GeneralPurpose::new(
     GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
 );
 
+const FALLBACK_SCOPE: &str = "openid email profile";
+
 const TOKEN_ENDPOINT_AUTH_METHOD_PREFERENCE: [&str; 3] =
     ["none", "client_secret_post", "client_secret_basic"];
 
@@ -211,6 +213,16 @@ pub fn requested_scope(sources: &ScopeSources) -> Option<String> {
 
     debug_log("No source describes the scope to request", &[]);
     None
+}
+
+pub fn effective_scope(sources: &ScopeSources, has_explicit_token_endpoint: bool) -> String {
+    requested_scope(sources).unwrap_or_else(|| {
+        if has_explicit_token_endpoint {
+            String::new()
+        } else {
+            FALLBACK_SCOPE.to_string()
+        }
+    })
 }
 
 pub fn scope_request_changed(tokens: &Value, sources: &ScopeSources) -> bool {
