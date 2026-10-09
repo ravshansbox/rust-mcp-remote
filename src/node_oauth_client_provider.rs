@@ -158,6 +158,43 @@ impl TokenStormBrake {
     }
 }
 
+const AUTHORIZATION_STORM_LIMIT: usize = 5;
+
+#[derive(Debug, Clone, Default)]
+pub struct AuthorizationStormBrake {
+    recent_authorizations: Vec<f64>,
+}
+
+impl AuthorizationStormBrake {
+    pub fn guard_against_authorization_storm(&mut self, now_ms: f64) -> Result<(), String> {
+        self.recent_authorizations
+            .retain(|at| now_ms - at < TOKEN_STORM_WINDOW_MS);
+
+        if self.recent_authorizations.len() >= AUTHORIZATION_STORM_LIMIT {
+            let seconds = TOKEN_STORM_WINDOW_MS / 1000.0;
+            log(
+                &format!(
+                    "Stopping: {AUTHORIZATION_STORM_LIMIT} sign-ins were started in the last {seconds}s and none of them completed."
+                ),
+                &[],
+            );
+            debug_log(
+                "Authorization loop detected",
+                &[
+                    json!({ "starts": self.recent_authorizations.len(), "windowMs": TOKEN_STORM_WINDOW_MS }),
+                ],
+            );
+            return Err(format!(
+                "Stopped after {AUTHORIZATION_STORM_LIMIT} sign-ins in {seconds}s, none of which completed. Opening another \
+                 browser tab would only repeat it - check that the server accepts the tokens this client is being issued."
+            ));
+        }
+
+        self.recent_authorizations.push(now_ms);
+        Ok(())
+    }
+}
+
 pub fn is_token_expired(expires_at: Option<f64>, now_ms: f64) -> bool {
     expires_at
         .filter(|expires_at| *expires_at != 0.0 && !expires_at.is_nan())
