@@ -88,3 +88,100 @@ pub fn translate_modern_result(result: Value) -> TranslatedResult {
         }
     }
 }
+
+pub const MAX_INPUT_REQUIRED_ROUNDS: usize = 10;
+
+pub const MAX_INPUT_REQUESTS_PER_ROUND: usize = 8;
+
+fn is_truthy(value: Option<&Value>) -> bool {
+    match value {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(flag)) => *flag,
+        Some(Value::Number(number)) => number.as_f64().is_some_and(|number| number != 0.0),
+        Some(Value::String(text)) => !text.is_empty(),
+        Some(Value::Array(_) | Value::Object(_)) => true,
+    }
+}
+
+pub fn subscription_filter_for(
+    capabilities: Option<&Map<String, Value>>,
+    resource_subscriptions: &[String],
+) -> Option<Value> {
+    let announces_changes = |capability: &str| {
+        is_truthy(
+            capabilities
+                .and_then(|capabilities| capabilities.get(capability))
+                .and_then(|capability| capability.get("listChanged")),
+        )
+    };
+
+    let mut filter = Map::new();
+    for (capability, key) in [
+        ("tools", "toolsListChanged"),
+        ("prompts", "promptsListChanged"),
+        ("resources", "resourcesListChanged"),
+    ] {
+        if announces_changes(capability) {
+            filter.insert(key.to_string(), Value::Bool(true));
+        }
+    }
+    if !resource_subscriptions.is_empty() {
+        filter.insert(
+            "resourceSubscriptions".to_string(),
+            Value::from(resource_subscriptions.to_vec()),
+        );
+    }
+
+    (!filter.is_empty()).then_some(Value::Object(filter))
+}
+
+pub fn unacknowledged_subscriptions(
+    requested: &Map<String, Value>,
+    acknowledged: Option<&Value>,
+) -> Vec<String> {
+    let Some(Value::Object(granted)) = acknowledged else {
+        return Vec::new();
+    };
+
+    requested
+        .iter()
+        .filter(|(key, asked)| {
+            if key.as_str() == "resourceSubscriptions" {
+                let got = granted
+                    .get("resourceSubscriptions")
+                    .and_then(Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
+                return asked
+                    .as_array()
+                    .is_some_and(|asked| asked.iter().any(|uri| !got.contains(uri)));
+            }
+            !is_truthy(granted.get(key.as_str()))
+        })
+        .map(|(key, _)| key.clone())
+        .collect()
+}
+
+pub fn input_required_retry_params(
+    original_params: Option<&Value>,
+    responses: &Map<String, Value>,
+    request_state: Option<&str>,
+) -> Value {
+    let mut params = match original_params {
+        Some(Value::Object(original)) => original.clone(),
+        _ => Map::new(),
+    };
+    if !responses.is_empty() {
+        params.insert(
+            "inputResponses".to_string(),
+            Value::Object(responses.clone()),
+        );
+    }
+    if let Some(request_state) = request_state {
+        params.insert(
+            "requestState".to_string(),
+            Value::String(request_state.to_string()),
+        );
+    }
+    Value::Object(params)
+}
