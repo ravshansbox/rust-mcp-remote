@@ -1,4 +1,4 @@
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 pub fn local_answer_for(method: &str) -> Option<Value> {
     match method {
@@ -487,4 +487,44 @@ fn is_discover_result(value: &Value) -> bool {
             .get("capabilities")
             .is_some_and(is_server_capabilities)
         && optional(result, "instructions", Value::is_string)
+}
+
+pub const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
+
+pub const SUPPORTED_PROTOCOL_VERSIONS: [&str; 5] = [
+    LATEST_PROTOCOL_VERSION,
+    "2025-06-18",
+    "2025-03-26",
+    "2024-11-05",
+    "2024-10-07",
+];
+
+pub fn synthesize_initialize_result(discover: &Value, identity: &LegacyClientIdentity) -> Value {
+    let protocol_version = identity
+        .protocol_version
+        .as_deref()
+        .filter(|requested| SUPPORTED_PROTOCOL_VERSIONS.contains(requested))
+        .unwrap_or(LATEST_PROTOCOL_VERSION);
+
+    let advertised = discover
+        .get("_meta")
+        .and_then(|meta| meta.get(SERVER_INFO_META_KEY));
+    let server_info = match advertised {
+        Some(advertised) if is_truthy(advertised.get("name")) => advertised.clone(),
+        _ => json!({ "name": "remote MCP server", "version": FIRST_MODERN_PROTOCOL_VERSION }),
+    };
+
+    let capabilities = match discover.get("capabilities") {
+        Some(Value::Null) | None => Value::Object(Map::new()),
+        Some(capabilities) => capabilities.clone(),
+    };
+
+    let mut result = Map::new();
+    result.insert("protocolVersion".to_string(), json!(protocol_version));
+    result.insert("capabilities".to_string(), capabilities);
+    result.insert("serverInfo".to_string(), server_info);
+    if is_truthy(discover.get("instructions")) {
+        result.insert("instructions".to_string(), discover["instructions"].clone());
+    }
+    Value::Object(result)
 }
