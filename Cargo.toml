@@ -7,6 +7,7 @@ edition = "2024"
 base64 = "0.23.1"
 httpdate = "1.0.3"
 libc = "0.2.190"
+md5 = "0.8.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 url = "2.5.8"
