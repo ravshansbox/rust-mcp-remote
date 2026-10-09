@@ -307,3 +307,184 @@ pub fn discover_request(id: &str, identity: &LegacyClientIdentity) -> Value {
     });
     stamp_modern_meta(&request, identity, FIRST_MODERN_PROTOCOL_VERSION)
 }
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum EraVerdict {
+    Legacy { reason: String },
+    Modern { version: String, discover: Value },
+    Incompatible { reason: String },
+}
+
+const MODERN_ERROR_CODES: [i64; 1] = [-32022];
+
+pub fn read_era_from_discover_response(message: &Value) -> EraVerdict {
+    if let Some(error) = message.get("error").filter(|error| is_truthy(Some(error))) {
+        let code = error.get("code");
+        if !code
+            .and_then(Value::as_i64)
+            .is_some_and(|code| MODERN_ERROR_CODES.contains(&code))
+        {
+            let code = code.map_or("undefined".to_string(), Value::to_string);
+            return EraVerdict::Legacy {
+                reason: format!("the server answered server/discover with error {code}"),
+            };
+        }
+
+        let supported = parse_supported_versions(error.get("data"));
+        if let Some(version) = supported.as_deref().and_then(choose_modern_version) {
+            return EraVerdict::Incompatible {
+                reason: format!(
+                    "the server asked for protocol version {version}, which the probe already offered"
+                ),
+            };
+        }
+
+        return match supported {
+            Some(supported)
+                if supported
+                    .iter()
+                    .all(|offered| offered.as_str() >= FIRST_MODERN_PROTOCOL_VERSION) =>
+            {
+                EraVerdict::Incompatible {
+                    reason: format!(
+                        "the server offers {}, and this proxy speaks {}",
+                        supported.join(", "),
+                        SUPPORTED_MODERN_VERSIONS.join(", ")
+                    ),
+                }
+            }
+            Some(supported) => EraVerdict::Legacy {
+                reason: format!(
+                    "the server offers no modern revision this proxy speaks (it offers {})",
+                    supported.join(", ")
+                ),
+            },
+            None => EraVerdict::Legacy {
+                reason: "the server offers no modern revision this proxy speaks".to_string(),
+            },
+        };
+    }
+
+    let Some(discover) = message
+        .get("result")
+        .filter(|result| is_discover_result(result))
+    else {
+        return EraVerdict::Legacy {
+            reason:
+                "the server answered server/discover with something that is not a DiscoverResult"
+                    .to_string(),
+        };
+    };
+
+    let supported_versions: Vec<String> = discover["supportedVersions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|version| version.as_str().map(str::to_string))
+        .collect();
+    match choose_modern_version(&supported_versions) {
+        Some(version) => EraVerdict::Modern {
+            version: version.to_string(),
+            discover: discover.clone(),
+        },
+        None => EraVerdict::Incompatible {
+            reason: format!(
+                "the server offers {}, and this proxy speaks {}",
+                supported_versions.join(", "),
+                SUPPORTED_MODERN_VERSIONS.join(", ")
+            ),
+        },
+    }
+}
+
+fn choose_modern_version(supported_versions: &[String]) -> Option<&'static str> {
+    SUPPORTED_MODERN_VERSIONS.into_iter().find(|candidate| {
+        supported_versions
+            .iter()
+            .any(|offered| offered == candidate)
+    })
+}
+
+fn parse_supported_versions(data: Option<&Value>) -> Option<Vec<String>> {
+    let versions: Vec<String> = data?
+        .get("supported")?
+        .as_array()?
+        .iter()
+        .filter_map(|entry| entry.as_str().map(str::to_string))
+        .collect();
+    (!versions.is_empty()).then_some(versions)
+}
+
+fn optional(object: &Map<String, Value>, key: &str, valid: impl Fn(&Value) -> bool) -> bool {
+    object.get(key).is_none_or(valid)
+}
+
+fn is_json_object(value: &Value) -> bool {
+    value.is_object()
+}
+
+fn is_record_of_json_objects(value: &Value) -> bool {
+    value
+        .as_object()
+        .is_some_and(|record| record.values().all(is_json_object))
+}
+
+fn is_list_changed_object(value: &Value, flags: &[&str]) -> bool {
+    value.as_object().is_some_and(|object| {
+        flags
+            .iter()
+            .all(|flag| optional(object, flag, Value::is_boolean))
+    })
+}
+
+fn is_tasks_capability(value: &Value) -> bool {
+    let Some(tasks) = value.as_object() else {
+        return false;
+    };
+    optional(tasks, "list", is_json_object)
+        && optional(tasks, "cancel", is_json_object)
+        && optional(tasks, "requests", |requests| {
+            requests.as_object().is_some_and(|requests| {
+                optional(requests, "tools", |tools| {
+                    tools
+                        .as_object()
+                        .is_some_and(|tools| optional(tools, "call", is_json_object))
+                })
+            })
+        })
+}
+
+fn is_server_capabilities(value: &Value) -> bool {
+    let Some(capabilities) = value.as_object() else {
+        return false;
+    };
+    optional(capabilities, "experimental", is_record_of_json_objects)
+        && optional(capabilities, "logging", is_json_object)
+        && optional(capabilities, "completions", is_json_object)
+        && optional(capabilities, "prompts", |prompts| {
+            is_list_changed_object(prompts, &["listChanged"])
+        })
+        && optional(capabilities, "resources", |resources| {
+            is_list_changed_object(resources, &["subscribe", "listChanged"])
+        })
+        && optional(capabilities, "tools", |tools| {
+            is_list_changed_object(tools, &["listChanged"])
+        })
+        && optional(capabilities, "tasks", is_tasks_capability)
+        && optional(capabilities, "extensions", is_record_of_json_objects)
+}
+
+fn is_discover_result(value: &Value) -> bool {
+    let Some(result) = value.as_object() else {
+        return false;
+    };
+    optional(result, "_meta", is_json_object)
+        && result
+            .get("supportedVersions")
+            .and_then(Value::as_array)
+            .is_some_and(|versions| versions.iter().all(Value::is_string))
+        && result
+            .get("capabilities")
+            .is_some_and(is_server_capabilities)
+        && optional(result, "instructions", Value::is_string)
+}
