@@ -308,6 +308,27 @@ pub fn extract_header_args_to(
     Ok(headers)
 }
 
+pub fn finalise_headers_to(
+    console: &mut impl std::io::Write,
+    headers: Vec<(String, String)>,
+) -> Vec<(String, String)> {
+    if !headers.is_empty() {
+        let names: Vec<&str> = headers.iter().map(|(name, _)| name.as_str()).collect();
+        log_to(
+            console,
+            &format!("Using custom headers: {}", names.join(", ")),
+            &[],
+        );
+    }
+    headers
+        .into_iter()
+        .map(|(name, value)| {
+            let value = substitute_env_vars_to(console, &value, &format!("header '{name}'"));
+            (name, value)
+        })
+        .collect()
+}
+
 fn is_javascript_whitespace(character: char) -> bool {
     matches!(
         character,
