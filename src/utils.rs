@@ -233,6 +233,46 @@ pub fn parse_header_line(line: &str) -> Option<(String, String)> {
     Some((name.to_string(), value.to_string()))
 }
 
+pub fn read_header_file(file_path: &str) -> Result<Vec<(String, String)>, String> {
+    read_header_file_to(&mut std::io::stderr(), file_path)
+}
+
+pub fn read_header_file_to(
+    console: &mut impl std::io::Write,
+    file_path: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let contents = std::fs::read_to_string(file_path)
+        .map_err(|error| format!("Could not read the header file {file_path}: {error}"))?;
+    let mut headers: Vec<(String, String)> = Vec::new();
+    for (index, line) in contents.split('\n').enumerate() {
+        let trimmed = line.trim_matches(is_javascript_whitespace);
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((name, value)) = parse_header_line(trimmed) else {
+            log_to(
+                console,
+                &format!(
+                    "Warning: ignoring line {} of {file_path}, which is not in Name:Value form",
+                    index + 1
+                ),
+                &[],
+            );
+            continue;
+        };
+        match headers.iter_mut().find(|(existing, _)| *existing == name) {
+            Some(entry) => entry.1 = value,
+            None => headers.push((name, value)),
+        }
+    }
+    log_to(
+        console,
+        &format!("Loaded {} header(s) from {file_path}", headers.len()),
+        &[],
+    );
+    Ok(headers)
+}
+
 fn is_javascript_whitespace(character: char) -> bool {
     matches!(
         character,
