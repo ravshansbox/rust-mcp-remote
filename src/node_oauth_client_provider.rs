@@ -880,4 +880,42 @@ impl NodeOAuthClientProvider {
             &self.options.server_url,
         )
     }
+
+    pub fn scope_sources(&self) -> ScopeSources<'_> {
+        ScopeSources {
+            static_oauth_client_metadata: self.static_oauth_client_metadata.as_ref(),
+            www_authenticate_scope: self.www_authenticate_scope.as_deref(),
+            protected_resource_metadata: self.protected_resource_metadata.as_ref(),
+            client_information: self.client_info.as_ref(),
+            authorization_server_metadata: self.authorization_server_metadata.as_ref(),
+        }
+    }
+
+    pub fn effective_scope(&self) -> String {
+        effective_scope(&self.scope_sources(), self.has_explicit_token_endpoint())
+    }
+
+    pub fn token_endpoint_auth_method(&self) -> &'static str {
+        token_endpoint_auth_method(self.authorization_server_metadata.as_ref())
+    }
+
+    pub fn grant_types(&self) -> Vec<&'static str> {
+        grant_types(self.use_client_credentials, self.use_device_code)
+    }
+
+    pub fn client_metadata(&self) -> Value {
+        let redirect_url = self.redirect_url();
+        let effective_scope = self.effective_scope();
+        client_metadata(&ClientMetadataSources {
+            redirect_url: redirect_url.as_deref(),
+            token_endpoint_auth_method: self.token_endpoint_auth_method(),
+            grant_types: self.grant_types(),
+            client_name: &self.client_name,
+            client_uri: &self.client_uri,
+            software_id: &self.software_id,
+            software_version: &self.software_version,
+            static_oauth_client_metadata: self.static_oauth_client_metadata.as_ref(),
+            effective_scope: &effective_scope,
+        })
+    }
 }
