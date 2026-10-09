@@ -55,3 +55,14 @@ pub fn build_client_credentials_request(
     }
     Ok(FormRequest { headers, params })
 }
+
+pub fn token_request_failure_message(status: u16, body: Option<&Value>) -> String {
+    let field = |name: &str| body.and_then(|body| body.get(name)).and_then(Value::as_str);
+    let detail: String = field("error_description")
+        .or_else(|| field("error"))
+        .unwrap_or("unknown error")
+        .chars()
+        .take(500)
+        .collect();
+    format!("The client_credentials token request failed (HTTP {status}): {detail}")
+}
