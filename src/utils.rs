@@ -889,6 +889,31 @@ pub fn parse_auth_timeout_to(console: &mut impl std::io::Write, args: &[String])
     }
 }
 
+pub fn validate_server_url_to(
+    console: &mut impl std::io::Write,
+    server_url: Option<&str>,
+    allow_http: bool,
+    usage: &str,
+) -> Result<bool, String> {
+    let Some(server_url) = server_url.filter(|server_url| !server_url.is_empty()) else {
+        log_to(console, usage, &[]);
+        return Ok(false);
+    };
+    let url = url::Url::parse(server_url).map_err(|_| "Invalid URL".to_string())?;
+    let is_localhost =
+        matches!(url.host_str(), Some("localhost" | "127.0.0.1")) && url.scheme() == "http";
+    if !(url.scheme() == "https" || is_localhost || allow_http) {
+        log_to(
+            console,
+            "Error: Non-HTTPS URLs are only allowed for localhost or when --allow-http flag is provided",
+            &[],
+        );
+        log_to(console, usage, &[]);
+        return Ok(false);
+    }
+    Ok(true)
+}
+
 pub fn get_server_url_hash(
     server_url: &str,
     authorize_resource: Option<&str>,
