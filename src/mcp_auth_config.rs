@@ -2,6 +2,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
@@ -127,4 +128,53 @@ pub fn delete_stale_config_files(server_url_hash: &str, prefix: &str, max_age: D
             let _ = std::fs::remove_file(entry.path());
         }
     }
+}
+
+#[derive(Deserialize)]
+struct LeaseFile {
+    pid: u32,
+    nonce: String,
+    at: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConfigLease {
+    pub pid: u32,
+    pub nonce: String,
+    pub at: f64,
+    pub live: bool,
+}
+
+fn process_is_alive(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+fn read_lease_file(server_url_hash: &str, filename: &str) -> Option<LeaseFile> {
+    read_json_file::<LeaseFile>(server_url_hash, filename)
+        .filter(|lease| lease.pid > 0 && !lease.nonce.is_empty())
+}
+
+pub fn read_config_lease(
+    server_url_hash: &str,
+    filename: &str,
+    max_age: Duration,
+) -> Option<ConfigLease> {
+    let lease = read_lease_file(server_url_hash, filename)?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as f64;
+    let live = now - lease.at < max_age.as_millis() as f64 && process_is_alive(lease.pid);
+    Some(ConfigLease {
+        pid: lease.pid,
+        nonce: lease.nonce,
+        at: lease.at,
+        live,
+    })
 }
