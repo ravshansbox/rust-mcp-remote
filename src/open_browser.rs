@@ -1,4 +1,12 @@
-use serde_json::{Map, Value};
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use serde_json::{Map, Value, json};
+
+use crate::logging::debug_log;
+
+pub const HELPER_SETTLE_MS: u64 = 500;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrowserFallback {
@@ -34,4 +42,48 @@ pub fn browser_launch_environment_details(lookup: impl Fn(&str) -> Option<String
         details.insert("BROWSER".to_string(), Value::from(browser));
     }
     Value::Object(details)
+}
+
+pub fn launch_helper(command: &str, args: &[String]) -> bool {
+    let mut child = match Command::new(command)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => {
+            debug_log(
+                &format!("Browser helper {command} failed to start"),
+                &[Value::from(error.to_string())],
+            );
+            return false;
+        }
+    };
+    let deadline = Instant::now() + Duration::from_millis(HELPER_SETTLE_MS);
+    while Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                debug_log(
+                    &format!("Browser helper {command} exited"),
+                    &[json!({ "code": status.code() })],
+                );
+                return status.success();
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(10)),
+            Err(error) => {
+                debug_log(
+                    &format!("Browser helper {command} failed to start"),
+                    &[Value::from(error.to_string())],
+                );
+                return false;
+            }
+        }
+    }
+    debug_log(
+        &format!("Browser helper {command} is still running, treating it as the browser"),
+        &[],
+    );
+    true
 }
