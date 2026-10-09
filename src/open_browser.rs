@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 
-use crate::logging::debug_log;
+use crate::logging::{debug_log, log};
 
 pub const HELPER_SETTLE_MS: u64 = 500;
 
@@ -86,4 +86,50 @@ pub fn launch_helper(command: &str, args: &[String]) -> bool {
         &[],
     );
     true
+}
+
+pub fn bundled_opener(url: &str, os: &str) -> BrowserFallback {
+    let (command, args): (&str, Vec<&str>) = match os {
+        "macos" => ("open", vec![url]),
+        "windows" => ("cmd", vec!["/c", "start", "\"\"", url]),
+        _ => ("xdg-open", vec![url]),
+    };
+    BrowserFallback {
+        command: command.to_string(),
+        args: args.iter().map(|argument| argument.to_string()).collect(),
+    }
+}
+
+pub fn open_browser_with(
+    url: &str,
+    os: &str,
+    mut launch: impl FnMut(&str, &[String]) -> bool,
+) -> bool {
+    debug_log(
+        "Browser launch environment",
+        &[browser_launch_environment_details(|name| {
+            std::env::var(name).ok()
+        })],
+    );
+    let opener = bundled_opener(url, os);
+    if launch(&opener.command, &opener.args) {
+        return true;
+    }
+    if os != "linux" {
+        return false;
+    }
+    for fallback in linux_browser_fallbacks(url) {
+        log(
+            &format!("Trying {} to open the browser...", fallback.command),
+            &[],
+        );
+        if launch(&fallback.command, &fallback.args) {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn open_browser(url: &str) -> bool {
+    open_browser_with(url, std::env::consts::OS, launch_helper)
 }
