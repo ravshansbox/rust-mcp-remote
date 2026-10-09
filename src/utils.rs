@@ -34,3 +34,34 @@ pub fn calculate_default_port(server_url_hash: &str) -> Option<u16> {
     let offset = u16::from_str_radix(&hex_prefix, 16).ok()?;
     Some(3335 + offset % 45816)
 }
+
+pub fn parse_seconds_option(args: &[String], flag: &str, allow_zero: bool) -> Option<u64> {
+    let index = args.iter().position(|arg| arg == flag)?;
+    let raw = args.get(index + 1)?;
+    let seconds = javascript_number(raw);
+    if !seconds.is_finite() || seconds < 0.0 || (seconds == 0.0 && !allow_zero) {
+        return None;
+    }
+    Some((seconds * 1000.0).round() as u64)
+}
+
+fn javascript_number(raw: &str) -> f64 {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return 0.0;
+    }
+    let radix_digits = [
+        ("0x", 16),
+        ("0X", 16),
+        ("0o", 8),
+        ("0O", 8),
+        ("0b", 2),
+        ("0B", 2),
+    ]
+    .into_iter()
+    .find_map(|(prefix, radix)| trimmed.strip_prefix(prefix).map(|digits| (digits, radix)));
+    if let Some((digits, radix)) = radix_digits {
+        return u64::from_str_radix(digits, radix).map_or(f64::NAN, |value| value as f64);
+    }
+    trimmed.parse().unwrap_or(f64::NAN)
+}
