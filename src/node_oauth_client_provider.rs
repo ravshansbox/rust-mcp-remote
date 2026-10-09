@@ -681,3 +681,60 @@ pub fn prepare_token_request(
     }
     Ok(Some(params))
 }
+
+pub fn resource_server_url<'a>(
+    resource_server_url: Option<&'a str>,
+    server_url: &'a str,
+) -> &'a str {
+    resource_server_url.unwrap_or(server_url)
+}
+
+pub fn trimmed_authorize_resource(authorize_resource: Option<&str>) -> Option<String> {
+    authorize_resource
+        .map(str::trim)
+        .filter(|resource| !resource.is_empty())
+        .map(str::to_string)
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ResourceSelection {
+    Omit,
+    Fixed(Url),
+    NoResource,
+    SdkDefault,
+}
+
+impl ResourceSelection {
+    pub fn validate_resource_url(&self) -> Option<Url> {
+        match self {
+            ResourceSelection::Omit => {
+                debug_log(
+                    "Resource parameter disabled; omitting it from authorization and token requests",
+                    &[],
+                );
+                None
+            }
+            ResourceSelection::Fixed(resource_url) => Some(resource_url.clone()),
+            ResourceSelection::NoResource | ResourceSelection::SdkDefault => None,
+        }
+    }
+}
+
+pub fn resource_selection(
+    skip_resource_parameter: bool,
+    authorize_resource: Option<&str>,
+    has_explicit_token_endpoint: bool,
+) -> Result<ResourceSelection, String> {
+    if skip_resource_parameter {
+        return Ok(ResourceSelection::Omit);
+    }
+    if let Some(resource) = authorize_resource {
+        return Url::parse(resource)
+            .map(ResourceSelection::Fixed)
+            .map_err(|error| format!("Invalid URL: {resource}: {error}"));
+    }
+    if has_explicit_token_endpoint {
+        return Ok(ResourceSelection::NoResource);
+    }
+    Ok(ResourceSelection::SdkDefault)
+}
