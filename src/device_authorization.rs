@@ -1,5 +1,31 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use serde_json::Value;
+
+pub const DEVICE_CODE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
+
+pub fn supports_device_authorization(metadata: Option<&Value>) -> bool {
+    let Some(metadata) = metadata else {
+        return false;
+    };
+    let has_endpoint = match metadata.get("device_authorization_endpoint") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(flag)) => *flag,
+        Some(Value::Number(number)) => number.as_f64().is_some_and(|value| value != 0.0),
+        Some(Value::String(text)) => !text.is_empty(),
+        Some(_) => true,
+    };
+    if !has_endpoint {
+        return false;
+    }
+
+    match metadata.get("grant_types_supported") {
+        Some(Value::Array(grants)) => grants
+            .iter()
+            .any(|grant| grant.as_str() == Some(DEVICE_CODE_GRANT_TYPE)),
+        _ => true,
+    }
+}
 
 pub fn apply_client_authentication(
     method: &str,
