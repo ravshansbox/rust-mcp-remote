@@ -629,3 +629,55 @@ pub fn discovery_state(
         },
     }))
 }
+
+pub struct TokenRequestSources<'a> {
+    pub has_explicit_token_endpoint: bool,
+    pub token_endpoint: Option<&'a str>,
+    pub client_secret: Option<&'a str>,
+    pub static_scope: Option<&'a str>,
+    pub scope: Option<&'a str>,
+}
+
+pub fn prepare_token_request(
+    sources: &TokenRequestSources,
+    brake: &mut TokenStormBrake,
+    now_ms: f64,
+    www_authenticate_scope: &mut Option<String>,
+) -> Result<Option<Vec<(&'static str, String)>>, String> {
+    if !sources.has_explicit_token_endpoint {
+        return Ok(None);
+    }
+    if brake.in_token_storm(now_ms) {
+        return Err(brake.token_storm_error());
+    }
+    if sources.client_secret.is_none_or(str::is_empty) {
+        return Err(
+            "The client_credentials grant needs a client secret; supply it with --static-oauth-client-info"
+                .to_string(),
+        );
+    }
+    let mut params = vec![("grant_type", "client_credentials".to_string())];
+    let effective_scope = sources
+        .static_scope
+        .map(str::trim)
+        .filter(|scope| !scope.is_empty())
+        .or(sources.scope)
+        .map(str::to_string);
+    if let Some(scope) = effective_scope.as_ref().filter(|scope| !scope.is_empty()) {
+        params.push(("scope", scope.clone()));
+    }
+    *www_authenticate_scope = effective_scope;
+    if let Some(endpoint) = sources
+        .token_endpoint
+        .and_then(|endpoint| Url::parse(endpoint).ok())
+    {
+        log(
+            &format!(
+                "Requesting a token from {} with the client_credentials grant",
+                endpoint.origin().ascii_serialization()
+            ),
+            &[],
+        );
+    }
+    Ok(Some(params))
+}
