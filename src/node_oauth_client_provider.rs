@@ -86,3 +86,10 @@ pub fn stale_client_registration_error(value: &Value) -> Option<OAuthError> {
         message: message.to_string(),
     })
 }
+
+pub fn is_issued_state(state: &str) -> bool {
+    (1..=64).contains(&state.len())
+        && state
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
