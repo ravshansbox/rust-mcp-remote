@@ -427,6 +427,38 @@ pub fn parse_static_oauth_client_metadata_to(
     }
 }
 
+pub fn parse_static_oauth_client_info_to(
+    console: &mut impl std::io::Write,
+    args: &[String],
+) -> Result<Option<serde_json::Value>, String> {
+    let Some(value) = args
+        .iter()
+        .position(|arg| arg == "--static-oauth-client-info")
+        .and_then(|index| args.get(index + 1))
+    else {
+        return Ok(None);
+    };
+    let context = "static OAuth client information";
+    if let Some(file_path) = value.strip_prefix('@') {
+        let contents = std::fs::read_to_string(file_path).map_err(|error| error.to_string())?;
+        let information = parse_json_with_env_vars(&contents, context)?;
+        log_to(
+            console,
+            &format!("Using static OAuth client information from file: {file_path}"),
+            &[],
+        );
+        Ok(Some(information))
+    } else {
+        let information = parse_json_with_env_vars(value, context)?;
+        log_to(
+            console,
+            "Using static OAuth client information from string",
+            &[],
+        );
+        Ok(Some(information))
+    }
+}
+
 fn javascript_number(raw: &str) -> f64 {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
