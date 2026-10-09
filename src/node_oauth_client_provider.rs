@@ -148,6 +148,22 @@ pub fn is_issued_state(state: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
+pub fn use_authorization_state(state: &str, incoming_state: &mut Option<String>) {
+    if !is_issued_state(state) {
+        log(
+            "Ignoring an authorization state this client could not have issued",
+            &[],
+        );
+        debug_log("Rejected authorization state", &[json!({ "state": state })]);
+        return;
+    }
+    *incoming_state = Some(state.to_string());
+}
+
+pub fn flow_state<'a>(incoming_state: Option<&'a str>, state: &'a str) -> &'a str {
+    incoming_state.unwrap_or(state)
+}
+
 const TOKEN_EXPIRY_MARGIN_MS: f64 = 60_000.0;
 
 const TOKEN_STORM_LIMIT: usize = 20;
