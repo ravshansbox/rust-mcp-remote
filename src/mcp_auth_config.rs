@@ -178,3 +178,9 @@ pub fn read_config_lease(
         live,
     })
 }
+
+pub fn release_config_lease(server_url_hash: &str, filename: &str, nonce: &str) {
+    if read_lease_file(server_url_hash, filename).is_some_and(|lease| lease.nonce == nonce) {
+        delete_config_file(server_url_hash, filename);
+    }
+}
