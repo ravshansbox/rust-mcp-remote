@@ -66,3 +66,21 @@ pub fn token_request_failure_message(status: u16, body: Option<&Value>) -> Strin
         .collect();
     format!("The client_credentials token request failed (HTTP {status}): {detail}")
 }
+
+pub fn client_credentials_request_debug_details(
+    token_endpoint: &str,
+    auth_method: &str,
+    scope: Option<&str>,
+    resource: Option<&str>,
+) -> Value {
+    let mut details = serde_json::Map::new();
+    details.insert("tokenEndpoint".to_string(), Value::from(token_endpoint));
+    details.insert("authMethod".to_string(), Value::from(auth_method));
+    if let Some(scope) = scope {
+        details.insert("scope".to_string(), Value::from(scope));
+    }
+    if let Some(resource) = resource {
+        details.insert("resource".to_string(), Value::from(resource));
+    }
+    Value::Object(details)
+}
