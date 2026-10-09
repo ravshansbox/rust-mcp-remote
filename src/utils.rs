@@ -239,3 +239,48 @@ fn json_with_utf16_sorted_keys(record: &BTreeMap<String, String>) -> String {
         .collect();
     format!("{{{}}}", fields.join(","))
 }
+
+pub fn substitute_env_vars(value: &str) -> String {
+    let mut result = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(start) = rest.find("${") {
+        let Some(length) = rest[start + 2..].find('}') else {
+            break;
+        };
+        if length == 0 {
+            result.push_str(&rest[..start + 1]);
+            rest = &rest[start + 1..];
+            continue;
+        }
+        let name = &rest[start + 2..start + 2 + length];
+        let end = start + 3 + length;
+        result.push_str(&rest[..start]);
+        let environment_value = (!name.contains(['=', '\0']))
+            .then(|| std::env::var_os(name))
+            .flatten();
+        match environment_value {
+            Some(environment_value) => result.push_str(&environment_value.to_string_lossy()),
+            None => result.push_str(&rest[start..end]),
+        }
+        rest = &rest[end..];
+    }
+    result.push_str(rest);
+    result
+}
+
+pub fn parse_json_with_env_vars(raw: &str, context: &str) -> Result<serde_json::Value, String> {
+    let has_placeholder = raw.contains("${");
+    let expanded = if has_placeholder {
+        substitute_env_vars(raw)
+    } else {
+        raw.to_string()
+    };
+    serde_json::from_str(&expanded).map_err(|_| {
+        let suffix = if has_placeholder {
+            " after expanding its ${...} placeholders"
+        } else {
+            ""
+        };
+        format!("Could not parse the {context} as JSON{suffix}")
+    })
+}
