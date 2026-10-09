@@ -396,6 +396,37 @@ pub fn parse_callback_path_to(console: &mut impl std::io::Write, args: &[String]
     }
 }
 
+pub fn parse_static_oauth_client_metadata_to(
+    console: &mut impl std::io::Write,
+    args: &[String],
+) -> Result<Option<serde_json::Value>, String> {
+    let Some(value) = args
+        .iter()
+        .position(|arg| arg == "--static-oauth-client-metadata")
+        .and_then(|index| args.get(index + 1))
+    else {
+        return Ok(None);
+    };
+    if let Some(file_path) = value.strip_prefix('@') {
+        let contents = std::fs::read_to_string(file_path).map_err(|error| error.to_string())?;
+        let metadata = serde_json::from_str(&contents).map_err(|error| error.to_string())?;
+        log_to(
+            console,
+            &format!("Using static OAuth client metadata from file: {file_path}"),
+            &[],
+        );
+        Ok(Some(metadata))
+    } else {
+        let metadata = serde_json::from_str(value).map_err(|error| error.to_string())?;
+        log_to(
+            console,
+            "Using static OAuth client metadata from string",
+            &[],
+        );
+        Ok(Some(metadata))
+    }
+}
+
 fn javascript_number(raw: &str) -> f64 {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
