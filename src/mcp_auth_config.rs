@@ -60,3 +60,42 @@ pub fn write_json_file(server_url_hash: &str, filename: &str, data: &Value) -> s
     }
     Ok(())
 }
+
+#[derive(Debug)]
+struct ReadTextFileError {
+    message: String,
+    cause: std::io::Error,
+}
+
+impl std::fmt::Display for ReadTextFileError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ReadTextFileError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.cause)
+    }
+}
+
+pub fn read_text_file(
+    server_url_hash: &str,
+    filename: &str,
+    error_message: Option<&str>,
+) -> std::io::Result<String> {
+    ensure_config_dir()
+        .and_then(|()| std::fs::read_to_string(config_file_path(server_url_hash, filename)))
+        .map_err(|cause| {
+            let message = error_message
+                .filter(|message| !message.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("Error reading {filename}"));
+            std::io::Error::new(cause.kind(), ReadTextFileError { message, cause })
+        })
+}
+
+pub fn write_text_file(server_url_hash: &str, filename: &str, text: &str) -> std::io::Result<()> {
+    ensure_config_dir()?;
+    write_owner_only(&config_file_path(server_url_hash, filename), text)
+}
