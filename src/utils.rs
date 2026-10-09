@@ -155,10 +155,31 @@ pub fn parse_authorize_params(args: &[String]) -> Result<BTreeMap<String, String
 }
 
 pub fn parse_seconds_option(args: &[String], flag: &str, allow_zero: bool) -> Option<u64> {
+    parse_seconds_option_to(&mut std::io::stderr(), args, flag, allow_zero)
+}
+
+pub fn parse_seconds_option_to(
+    console: &mut impl std::io::Write,
+    args: &[String],
+    flag: &str,
+    allow_zero: bool,
+) -> Option<u64> {
     let index = args.iter().position(|arg| arg == flag)?;
     let raw = args.get(index + 1)?;
     let seconds = javascript_number(raw);
     if !seconds.is_finite() || seconds < 0.0 || (seconds == 0.0 && !allow_zero) {
+        let expected = if allow_zero {
+            "non-negative"
+        } else {
+            "positive"
+        };
+        log_to(
+            console,
+            &format!(
+                "Warning: Ignoring invalid {flag} value: {raw}. Must be a {expected} number of seconds."
+            ),
+            &[],
+        );
         return None;
     }
     Some((seconds * 1000.0).round() as u64)
