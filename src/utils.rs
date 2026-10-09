@@ -349,6 +349,21 @@ pub fn parse_protocol_mode_to(
     }
 }
 
+pub fn parse_callback_host_to(console: &mut impl std::io::Write, args: &[String]) -> String {
+    match args
+        .iter()
+        .position(|arg| arg == "--host")
+        .and_then(|index| args.get(index + 1))
+    {
+        Some(host) => {
+            log_to(console, &format!("Using callback hostname: {host}"), &[]);
+            host.clone()
+        }
+        None if cfg!(windows) => "127.0.0.1".to_string(),
+        None => "localhost".to_string(),
+    }
+}
+
 fn javascript_number(raw: &str) -> f64 {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
