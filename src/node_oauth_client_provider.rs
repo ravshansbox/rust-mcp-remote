@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use url::Url;
 
+use crate::device_authorization::DEVICE_CODE_GRANT_TYPE;
 use crate::logging::{debug_log, log};
 use crate::mcp_auth_config::{read_config_lease, read_json_file};
 
@@ -411,6 +412,16 @@ fn set_search_param(url: &mut Url, key: &str, value: &str) {
     if !found {
         serializer.append_pair(key, value);
     }
+}
+
+pub fn grant_types(use_client_credentials: bool, use_device_code: bool) -> Vec<&'static str> {
+    if use_client_credentials {
+        return vec!["client_credentials"];
+    }
+    if use_device_code {
+        return vec![DEVICE_CODE_GRANT_TYPE, "refresh_token"];
+    }
+    vec!["authorization_code", "refresh_token"]
 }
 
 pub fn apply_authorize_params(
