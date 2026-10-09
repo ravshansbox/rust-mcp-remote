@@ -661,6 +661,34 @@ pub fn is_client_metadata_url(value: &str) -> bool {
     url::Url::parse(value).is_ok_and(|url| url.scheme() == "https" && url.path() != "/")
 }
 
+pub fn parse_client_metadata_url_to(
+    console: &mut impl std::io::Write,
+    args: &[String],
+) -> Option<String> {
+    let value = args
+        .iter()
+        .position(|arg| arg == "--client-metadata-url")
+        .and_then(|index| args.get(index + 1))?
+        .trim();
+    if is_client_metadata_url(value) {
+        log_to(
+            console,
+            &format!("Using client metadata document: {value}"),
+            &[],
+        );
+        Some(value.to_string())
+    } else {
+        log_to(
+            console,
+            &format!(
+                "Warning: Ignoring invalid client metadata URL: {value}. It must be an HTTPS URL with a path."
+            ),
+            &[],
+        );
+        None
+    }
+}
+
 pub fn get_server_url_hash(
     server_url: &str,
     authorize_resource: Option<&str>,
