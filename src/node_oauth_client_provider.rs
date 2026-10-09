@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
@@ -11,7 +12,7 @@ use url::Url;
 use crate::device_authorization::DEVICE_CODE_GRANT_TYPE;
 use crate::logging::{debug_log, log};
 use crate::mcp_auth_config::{read_config_lease, read_json_file};
-use crate::utils::build_redirect_url;
+use crate::utils::{MCP_REMOTE_VERSION, build_redirect_url};
 
 const URL_SAFE_ANY_PADDING: GeneralPurpose = GeneralPurpose::new(
     &alphabet::URL_SAFE,
@@ -737,4 +738,115 @@ pub fn resource_selection(
         return Ok(ResourceSelection::NoResource);
     }
     Ok(ResourceSelection::SdkDefault)
+}
+
+#[derive(Default)]
+pub struct OAuthProviderOptions {
+    pub server_url: String,
+    pub resource_server_url: Option<String>,
+    pub callback_port: u16,
+    pub host: String,
+    pub callback_path: Option<String>,
+    pub config_dir: Option<String>,
+    pub client_name: Option<String>,
+    pub client_uri: Option<String>,
+    pub software_id: Option<String>,
+    pub software_version: Option<String>,
+    pub static_oauth_client_metadata: Option<Value>,
+    pub static_oauth_client_info: Option<Value>,
+    pub client_metadata_url: Option<String>,
+    pub use_id_token: Option<bool>,
+    pub use_device_code: Option<bool>,
+    pub use_client_credentials: Option<bool>,
+    pub token_endpoint: Option<String>,
+    pub authorize_resource: Option<String>,
+    pub skip_resource_parameter: Option<bool>,
+    pub authorize_params: Option<BTreeMap<String, String>>,
+    pub server_url_hash: String,
+    pub authorization_server_metadata: Option<Value>,
+    pub protected_resource_metadata: Option<Value>,
+    pub www_authenticate_scope: Option<String>,
+}
+
+pub struct NodeOAuthClientProvider {
+    pub options: OAuthProviderOptions,
+    pub server_url_hash: String,
+    pub callback_path: String,
+    pub client_name: String,
+    pub client_uri: String,
+    pub software_id: String,
+    pub software_version: String,
+    pub static_oauth_client_metadata: Option<Value>,
+    pub static_oauth_client_info: Option<Value>,
+    pub client_metadata_url: Option<String>,
+    pub use_id_token: bool,
+    pub use_device_code: bool,
+    pub use_client_credentials: bool,
+    pub authorize_resource: Option<String>,
+    pub authorize_params: BTreeMap<String, String>,
+    pub skip_resource_parameter: bool,
+    pub resource_selection: ResourceSelection,
+    pub state: String,
+    pub client_info: Option<Value>,
+    pub incoming_state: Option<String>,
+    pub authorization_server_metadata: Option<Value>,
+    pub protected_resource_metadata: Option<Value>,
+    pub www_authenticate_scope: Option<String>,
+    pub token_storm_brake: TokenStormBrake,
+    pub authorization_storm_brake: AuthorizationStormBrake,
+}
+
+fn or_default(value: &Option<String>, default: &str) -> String {
+    value
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .unwrap_or(default)
+        .to_string()
+}
+
+impl NodeOAuthClientProvider {
+    pub fn new(options: OAuthProviderOptions) -> Result<Self, String> {
+        let use_client_credentials = options.use_client_credentials.unwrap_or(false);
+        let authorize_resource = trimmed_authorize_resource(options.authorize_resource.as_deref());
+        let skip_resource_parameter = options.skip_resource_parameter.unwrap_or(false);
+        let resource_selection = resource_selection(
+            skip_resource_parameter,
+            authorize_resource.as_deref(),
+            has_explicit_token_endpoint(use_client_credentials, options.token_endpoint.as_deref()),
+        )?;
+        Ok(Self {
+            server_url_hash: options.server_url_hash.clone(),
+            callback_path: or_default(&options.callback_path, "/oauth/callback"),
+            client_name: or_default(&options.client_name, "MCP CLI Client"),
+            client_uri: or_default(
+                &options.client_uri,
+                "https://github.com/modelcontextprotocol/mcp-cli",
+            ),
+            software_id: or_default(&options.software_id, "2e6dc280-f3c3-4e01-99a7-8181dbd1d23d"),
+            software_version: or_default(&options.software_version, MCP_REMOTE_VERSION),
+            static_oauth_client_metadata: options.static_oauth_client_metadata.clone(),
+            static_oauth_client_info: options.static_oauth_client_info.clone(),
+            client_metadata_url: options.client_metadata_url.clone(),
+            use_id_token: options.use_id_token.unwrap_or(false),
+            use_device_code: options.use_device_code.unwrap_or(false),
+            use_client_credentials,
+            authorize_resource,
+            authorize_params: options.authorize_params.clone().unwrap_or_default(),
+            skip_resource_parameter,
+            resource_selection,
+            state: uuid::Uuid::new_v4().to_string(),
+            client_info: None,
+            incoming_state: None,
+            authorization_server_metadata: options.authorization_server_metadata.clone(),
+            protected_resource_metadata: options.protected_resource_metadata.clone(),
+            www_authenticate_scope: options.www_authenticate_scope.clone(),
+            token_storm_brake: TokenStormBrake::default(),
+            authorization_storm_brake: AuthorizationStormBrake::default(),
+            options,
+        })
+    }
+
+    pub fn set_callback_port(&mut self, port: u16) {
+        self.options.callback_port = port;
+    }
 }
