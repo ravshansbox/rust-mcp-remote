@@ -65,6 +65,18 @@ pub fn jwt_expires_at(token: &str) -> Option<f64> {
     claims.get("exp")?.as_f64().map(|exp| exp * 1000.0)
 }
 
+pub fn bearer_expires_at(use_id_token: bool, tokens: &Value) -> Option<f64> {
+    let expires_at = tokens.get("expires_at").and_then(Value::as_f64);
+    let id_token = tokens
+        .get("id_token")
+        .and_then(Value::as_str)
+        .filter(|id_token| !id_token.is_empty());
+    match id_token {
+        Some(id_token) if use_id_token => jwt_expires_at(id_token).or(expires_at),
+        _ => expires_at,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OAuthError {
     pub code: String,
