@@ -1,6 +1,6 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -102,4 +102,29 @@ pub fn write_text_file(server_url_hash: &str, filename: &str, text: &str) -> std
 
 pub fn delete_config_file(server_url_hash: &str, filename: &str) {
     let _ = std::fs::remove_file(config_file_path(server_url_hash, filename));
+}
+
+pub fn delete_stale_config_files(server_url_hash: &str, prefix: &str, max_age: Duration) {
+    let config_dir = config_dir();
+    let Ok(entries) = std::fs::read_dir(&config_dir) else {
+        return;
+    };
+    let cutoff = SystemTime::now().checked_sub(max_age).unwrap_or(UNIX_EPOCH);
+    let filename_prefix = format!("{server_url_hash}_{prefix}");
+    for entry in entries.flatten() {
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(&filename_prefix)
+        {
+            continue;
+        }
+        let is_stale = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .is_ok_and(|modified| modified <= cutoff);
+        if is_stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
