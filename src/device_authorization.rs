@@ -8,6 +8,43 @@ pub const DEVICE_CODE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:devic
 
 const SLOW_DOWN_INCREMENT_SECONDS: f64 = 5.0;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormRequest {
+    pub headers: Vec<(String, String)>,
+    pub params: Vec<(String, String)>,
+}
+
+pub fn build_device_token_request(
+    auth_method: &str,
+    client_id: &str,
+    client_secret: Option<&str>,
+    device_code: &str,
+    resource: Option<&str>,
+) -> Result<FormRequest, String> {
+    let mut headers = vec![
+        (
+            "content-type".to_string(),
+            "application/x-www-form-urlencoded".to_string(),
+        ),
+        ("accept".to_string(), "application/json".to_string()),
+    ];
+    let mut params = vec![
+        ("grant_type".to_string(), DEVICE_CODE_GRANT_TYPE.to_string()),
+        ("device_code".to_string(), device_code.to_string()),
+    ];
+    apply_client_authentication(
+        auth_method,
+        client_id,
+        client_secret,
+        &mut headers,
+        &mut params,
+    )?;
+    if let Some(resource) = resource {
+        set_pair(&mut params, "resource", resource, false);
+    }
+    Ok(FormRequest { headers, params })
+}
+
 pub fn next_poll_interval(
     status: u16,
     body: Option<&Value>,
