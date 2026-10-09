@@ -97,3 +97,66 @@ pub fn write_debug_log(
         let _ = writeln!(console, "[DEBUG LOG ERROR] {error}");
     }
 }
+
+static DEBUG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SILENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static CURRENT_SERVER_URL_HASH: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+pub fn set_debug(enabled: bool) {
+    DEBUG.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn set_silent(enabled: bool) {
+    SILENT.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn set_current_server_url_hash(server_url_hash: Option<String>) {
+    *CURRENT_SERVER_URL_HASH
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = server_url_hash;
+}
+
+pub fn debug_log_to(console: &mut impl Write, message: &str, args: &[Value]) {
+    if !DEBUG.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let server_url_hash = CURRENT_SERVER_URL_HASH
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let formatted_message = format_debug_message(
+        &iso_timestamp(std::time::SystemTime::now()),
+        std::process::id(),
+        message,
+    );
+    write_debug_log(
+        console,
+        server_url_hash.as_deref(),
+        &formatted_message,
+        args,
+    );
+}
+
+pub fn debug_log(message: &str, args: &[Value]) {
+    debug_log_to(&mut std::io::stderr(), message, args);
+}
+
+pub fn log_to(console: &mut impl Write, message: &str, rest: &[Value]) {
+    if SILENT.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let mut line = format_log_line(std::process::id(), message);
+    for value in rest {
+        line.push(' ');
+        match value {
+            Value::String(text) => line.push_str(text),
+            other => line.push_str(&other.to_string()),
+        }
+    }
+    line.push('\n');
+    let _ = console.write_all(line.as_bytes());
+}
+
+pub fn log(message: &str, rest: &[Value]) {
+    log_to(&mut std::io::stderr(), message, rest);
+}
