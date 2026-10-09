@@ -3,7 +3,9 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rust_mcp_remote::mcp_auth_config::{config_file_path, write_text_file};
-use rust_mcp_remote::utils::invalidate_mismatched_client_registration;
+use rust_mcp_remote::utils::{
+    invalidate_mismatched_client_registration, invalidate_mismatched_client_registration_to,
+};
 
 static ENVIRONMENT: Mutex<()> = Mutex::new(());
 
@@ -89,4 +91,31 @@ fn does_nothing_when_there_is_no_registration() {
         invalidate_mismatched_client_registration(HASH, REDIRECT_URL);
         assert!(!config_file_path(HASH, FILENAME).exists());
     });
+}
+
+fn console_output(contents: &str, redirect_url: &str) -> String {
+    with_temporary_config_dir(|| {
+        write_text_file(HASH, FILENAME, contents).expect("write registration");
+        let mut console = Vec::new();
+        invalidate_mismatched_client_registration_to(&mut console, HASH, redirect_url);
+        String::from_utf8(console).expect("utf8")
+    })
+}
+
+#[test]
+fn logs_why_a_mismatched_registration_is_deleted() {
+    let contents = r#"{"client_id":"registered-id","redirect_uris":["http://localhost:7788/oauth/callback","https://proxy.example.com/oauth/callback"]}"#;
+    assert_eq!(
+        console_output(contents, REDIRECT_URL),
+        format!(
+            "[{}] Cached client registration is for http://localhost:7788/oauth/callback, https://proxy.example.com/oauth/callback but this session will use {REDIRECT_URL}. Deleting it so the client re-registers.\n",
+            std::process::id()
+        )
+    );
+}
+
+#[test]
+fn logs_nothing_for_a_matching_registration() {
+    let contents = format!(r#"{{"client_id":"registered-id","redirect_uris":["{REDIRECT_URL}"]}}"#);
+    assert_eq!(console_output(&contents, REDIRECT_URL), "");
 }
