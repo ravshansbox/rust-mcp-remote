@@ -5,6 +5,7 @@ pub mod coordination;
 pub mod device_authorization;
 pub mod logging;
 pub mod mcp_auth_config;
+pub mod node_oauth_client_provider;
 pub mod open_browser;
 pub mod protected_resource_metadata;
 pub mod protocol_era;
