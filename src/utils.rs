@@ -7,6 +7,7 @@ use crate::logging::log_to;
 
 pub const DEFAULT_CALLBACK_PATH: &str = "/oauth/callback";
 pub const MCP_REMOTE_ID_PATH: &str = "/.mcp-remote/id";
+pub const MCP_REMOTE_VERSION: &str = "0.1.38";
 const LONG_POLL_PATH: &str = "/wait-for-auth";
 
 const BASE64_SENTINEL_PREFIX: &str = "=?base64?";
@@ -988,6 +989,16 @@ pub fn validate_server_url_to(
         return Ok(false);
     }
     Ok(true)
+}
+
+pub fn early_exit_output(args: &[String], usage: &str) -> Option<String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        return Some(format!("{usage}\n"));
+    }
+    if args.iter().any(|arg| arg == "--version") {
+        return Some(format!("{MCP_REMOTE_VERSION}\n"));
+    }
+    None
 }
 
 pub fn parse_debug_and_silent_flags_to(console: &mut impl std::io::Write, args: &[String]) -> bool {
