@@ -1,8 +1,46 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use serde_json::Value;
+use serde_json::{Value, json};
+
+use crate::logging::debug_log;
 
 pub const DEVICE_CODE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
+
+const SLOW_DOWN_INCREMENT_SECONDS: f64 = 5.0;
+
+pub fn next_poll_interval(
+    status: u16,
+    body: Option<&Value>,
+    interval_seconds: f64,
+) -> Result<f64, String> {
+    let field = |name: &str| {
+        body.and_then(|body| body.get(name))
+            .filter(|value| !value.is_null())
+    };
+    match field("error").and_then(Value::as_str) {
+        Some("authorization_pending") => Ok(interval_seconds),
+        Some("slow_down") => {
+            let interval_seconds = interval_seconds + SLOW_DOWN_INCREMENT_SECONDS;
+            debug_log(
+                "Device token endpoint asked us to slow down",
+                &[json!({ "intervalSeconds": interval_seconds })],
+            );
+            Ok(interval_seconds)
+        }
+        Some("access_denied") => Err("Authorization was denied".to_string()),
+        Some("expired_token") => Err("The device code expired before it was approved".to_string()),
+        _ => {
+            let detail = match field("error_description").or_else(|| field("error")) {
+                Some(Value::String(text)) => text.clone(),
+                Some(other) => other.to_string(),
+                None => "unknown error".to_string(),
+            };
+            Err(format!(
+                "Device token request failed (HTTP {status}): {detail}"
+            ))
+        }
+    }
+}
 
 pub fn supports_device_authorization(metadata: Option<&Value>) -> bool {
     let Some(metadata) = metadata else {
