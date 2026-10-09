@@ -1,3 +1,5 @@
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
 use base64::Engine;
 use base64::alphabet;
 use base64::engine::DecodePaddingMode;
@@ -6,6 +8,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::logging::debug_log;
+use crate::mcp_auth_config::{read_config_lease, read_json_file};
 
 const URL_SAFE_ANY_PADDING: GeneralPurpose = GeneralPurpose::new(
     &alphabet::URL_SAFE,
@@ -118,6 +121,50 @@ pub fn is_token_expired(expires_at: Option<f64>, now_ms: f64) -> bool {
 
 pub fn is_sibling_token_fresh(expires_at: Option<f64>, now_ms: f64) -> bool {
     expires_at.is_some_and(|expires_at| now_ms < expires_at - TOKEN_EXPIRY_MARGIN_MS)
+}
+
+pub const REFRESH_LEASE_FILE: &str = "refresh_in_progress.json";
+const REFRESH_LEASE_MS: u64 = 30_000;
+const REFRESH_POLL_MS: u64 = 200;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SiblingRefresh {
+    Tokens(Value),
+    Released,
+    Abandoned,
+}
+
+pub fn await_refresh_by_sibling(server_url_hash: &str) -> SiblingRefresh {
+    debug_log(
+        "Waiting for the instance already refreshing this token",
+        &[],
+    );
+
+    loop {
+        std::thread::sleep(Duration::from_millis(REFRESH_POLL_MS));
+
+        let stored = read_json_file::<Value>(server_url_hash, "tokens.json");
+        if let Some(stored) = stored {
+            let expires_at = stored.get("expires_at").and_then(Value::as_f64);
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as f64;
+            if is_sibling_token_fresh(expires_at, now_ms) {
+                return SiblingRefresh::Tokens(stored);
+            }
+        }
+
+        match read_config_lease(
+            server_url_hash,
+            REFRESH_LEASE_FILE,
+            Duration::from_millis(REFRESH_LEASE_MS),
+        ) {
+            None => return SiblingRefresh::Released,
+            Some(holder) if !holder.live => return SiblingRefresh::Abandoned,
+            Some(_) => {}
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
