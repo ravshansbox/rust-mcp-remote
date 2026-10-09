@@ -23,3 +23,25 @@ pub fn jwt_expires_at(token: &str) -> Option<f64> {
     let claims: Value = serde_json::from_str(&String::from_utf8_lossy(&bytes)).ok()?;
     claims.get("exp")?.as_f64().map(|exp| exp * 1000.0)
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OAuthError {
+    pub code: String,
+    pub message: String,
+}
+
+pub fn stale_client_registration_error(value: &Value) -> Option<OAuthError> {
+    let response = value.as_object()?;
+    let code = response
+        .get("error")
+        .and_then(Value::as_str)
+        .filter(|code| matches!(*code, "invalid_client" | "unauthorized_client"))?;
+    let message = response
+        .get("error_description")
+        .and_then(Value::as_str)
+        .unwrap_or("Cached OAuth client registration is no longer valid");
+    Some(OAuthError {
+        code: code.to_string(),
+        message: message.to_string(),
+    })
+}
