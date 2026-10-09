@@ -70,3 +70,30 @@ pub fn format_debug_message(timestamp: &str, pid: u32, message: &str) -> String 
 pub fn format_log_line(pid: u32, message: &str) -> String {
     format!("[{pid}] {message}")
 }
+
+pub fn write_debug_log(
+    console: &mut impl Write,
+    server_url_hash: Option<&str>,
+    formatted_message: &str,
+    args: &[Value],
+) {
+    let Some(server_url_hash) = server_url_hash else {
+        let _ = writeln!(
+            console,
+            "[DEBUG LOG ERROR] global.currentServerUrlHash is not set. Cannot write debug log."
+        );
+        return;
+    };
+
+    let entry = format_debug_log_entry(formatted_message, args);
+    let console_line = if args.is_empty() {
+        format!("{formatted_message}\n")
+    } else {
+        entry.clone()
+    };
+    let _ = console.write_all(console_line.as_bytes());
+
+    if let Err(error) = append_debug_log(server_url_hash, &entry) {
+        let _ = writeln!(console, "[DEBUG LOG ERROR] {error}");
+    }
+}
