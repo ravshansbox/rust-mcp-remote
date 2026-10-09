@@ -93,6 +93,18 @@ struct ClientRegistration {
 }
 
 pub fn invalidate_mismatched_client_registration(server_url_hash: &str, redirect_url: &str) {
+    invalidate_mismatched_client_registration_to(
+        &mut std::io::stderr(),
+        server_url_hash,
+        redirect_url,
+    )
+}
+
+pub fn invalidate_mismatched_client_registration_to(
+    console: &mut impl std::io::Write,
+    server_url_hash: &str,
+    redirect_url: &str,
+) {
     let Some(client_info) = crate::mcp_auth_config::read_json_file::<ClientRegistration>(
         server_url_hash,
         "client_info.json",
@@ -106,6 +118,14 @@ pub fn invalidate_mismatched_client_registration(server_url_hash: &str, redirect
     {
         return;
     }
+    log_to(
+        console,
+        &format!(
+            "Cached client registration is for {} but this session will use {redirect_url}. Deleting it so the client re-registers.",
+            client_info.redirect_uris.join(", ")
+        ),
+        &[],
+    );
     crate::mcp_auth_config::delete_config_file(server_url_hash, "client_info.json");
 }
 
