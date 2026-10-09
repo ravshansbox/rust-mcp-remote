@@ -313,6 +313,22 @@ pub fn parse_network_options_to(
     options
 }
 
+const DEFAULT_KEEP_ALIVE_INTERVAL_MS: u64 = 30_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeepAliveConfig {
+    pub enabled: bool,
+    pub interval_ms: u64,
+}
+
+pub fn parse_keep_alive_to(console: &mut impl std::io::Write, args: &[String]) -> KeepAliveConfig {
+    let ping_interval_ms = parse_seconds_option_to(console, args, "--ping-interval", false);
+    KeepAliveConfig {
+        enabled: args.iter().any(|arg| arg == "--keep-alive") || ping_interval_ms.is_some(),
+        interval_ms: ping_interval_ms.unwrap_or(DEFAULT_KEEP_ALIVE_INTERVAL_MS),
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum TransportStrategy {
     SseOnly,
