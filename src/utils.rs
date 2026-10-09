@@ -260,16 +260,51 @@ pub fn read_header_file_to(
             );
             continue;
         };
-        match headers.iter_mut().find(|(existing, _)| *existing == name) {
-            Some(entry) => entry.1 = value,
-            None => headers.push((name, value)),
-        }
+        insert_header(&mut headers, name, value);
     }
     log_to(
         console,
         &format!("Loaded {} header(s) from {file_path}", headers.len()),
         &[],
     );
+    Ok(headers)
+}
+
+fn insert_header(headers: &mut Vec<(String, String)>, name: String, value: String) {
+    match headers.iter_mut().find(|(existing, _)| *existing == name) {
+        Some(entry) => entry.1 = value,
+        None => headers.push((name, value)),
+    }
+}
+
+pub fn extract_header_args_to(
+    console: &mut impl std::io::Write,
+    args: &mut Vec<String>,
+) -> Result<Vec<(String, String)>, String> {
+    let mut headers: Vec<(String, String)> = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        if args[index] == "--header" && index + 1 < args.len() {
+            match parse_header_line(&args[index + 1]) {
+                Some((name, value)) => insert_header(&mut headers, name, value),
+                None => log_to(
+                    console,
+                    "Warning: ignoring a --header argument that is not in Name:Value form",
+                    &[],
+                ),
+            }
+            args.drain(index..index + 2);
+            continue;
+        }
+        if args[index] == "--header-file" && index + 1 < args.len() {
+            for (name, value) in read_header_file_to(console, &args[index + 1])? {
+                insert_header(&mut headers, name, value);
+            }
+            args.drain(index..index + 2);
+            continue;
+        }
+        index += 1;
+    }
     Ok(headers)
 }
 
