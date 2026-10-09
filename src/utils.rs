@@ -314,6 +314,18 @@ pub fn parse_network_options_to(
     options
 }
 
+pub fn parse_enable_proxy_to(console: &mut impl std::io::Write, args: &[String]) -> bool {
+    let enable_proxy = args.iter().any(|arg| arg == "--enable-proxy");
+    if enable_proxy {
+        log_to(
+            console,
+            "HTTP proxy support enabled - using system HTTP_PROXY/HTTPS_PROXY environment variables",
+            &[],
+        );
+    }
+    enable_proxy
+}
+
 const DEFAULT_KEEP_ALIVE_INTERVAL_MS: u64 = 30_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
