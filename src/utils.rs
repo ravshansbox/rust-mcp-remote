@@ -24,3 +24,13 @@ pub fn encode_mcp_header_value(value: &str) -> String {
         )
     }
 }
+
+pub fn calculate_default_port(server_url_hash: &str) -> Option<u16> {
+    let hex_prefix: String = server_url_hash
+        .chars()
+        .take(4)
+        .take_while(char::is_ascii_hexdigit)
+        .collect();
+    let offset = u16::from_str_radix(&hex_prefix, 16).ok()?;
+    Some(3335 + offset % 45816)
+}
