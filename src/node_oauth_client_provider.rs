@@ -367,3 +367,24 @@ pub fn scope_request_changed(tokens: &Value, sources: &ScopeSources) -> bool {
     };
     obtained_for != requested
 }
+
+pub fn tokens_to_save(tokens: &Value, effective_scope: &str, now_ms: f64) -> Value {
+    let mut saved = tokens.as_object().cloned().unwrap_or_default();
+    let expires_at = tokens
+        .get("expires_at")
+        .filter(|expires_at| !expires_at.is_null())
+        .cloned()
+        .or_else(|| {
+            tokens
+                .get("expires_in")
+                .and_then(Value::as_f64)
+                .filter(|expires_in| *expires_in != 0.0)
+                .map(|expires_in| json!(now_ms + expires_in * 1000.0))
+        });
+    match expires_at {
+        Some(expires_at) => saved.insert("expires_at".into(), expires_at),
+        None => saved.remove("expires_at"),
+    };
+    saved.insert("requested_scope".into(), json!(effective_scope));
+    Value::Object(saved)
+}
