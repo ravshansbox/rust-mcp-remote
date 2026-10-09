@@ -1,4 +1,5 @@
 pub mod authorization_server_metadata;
+pub mod client_credentials;
 pub mod cookie_jar;
 pub mod device_authorization;
 pub mod logging;
