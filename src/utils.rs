@@ -83,6 +83,31 @@ pub fn calculate_default_port(server_url_hash: &str) -> Option<u16> {
     Some(3335 + offset % 45816)
 }
 
+pub fn select_callback_port_to(
+    console: &mut impl std::io::Write,
+    specified_port: Option<u16>,
+    default_port: u16,
+) -> u16 {
+    match specified_port.filter(|port| *port != 0) {
+        Some(port) => {
+            log_to(
+                console,
+                &format!("Using specified callback port: {port}"),
+                &[],
+            );
+            port
+        }
+        None => {
+            log_to(
+                console,
+                &format!("Using callback port derived from the server URL: {default_port}"),
+                &[],
+            );
+            default_port
+        }
+    }
+}
+
 pub fn build_redirect_url(host: &str, port: u16, callback_path: &str) -> String {
     format!("http://{host}:{port}{callback_path}")
 }
