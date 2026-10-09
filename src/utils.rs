@@ -831,6 +831,64 @@ pub fn parse_resource_to(
     Ok((authorize_resource, skip_resource_parameter))
 }
 
+pub fn parse_ignored_tools_to(
+    console: &mut impl std::io::Write,
+    args: &mut Vec<String>,
+) -> Vec<String> {
+    let mut ignored_tools = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        if args[index] == "--ignore-tool" && index + 1 < args.len() {
+            let tool_name = args.remove(index + 1);
+            args.remove(index);
+            log_to(console, &format!("Ignoring tool: {tool_name}"), &[]);
+            ignored_tools.push(tool_name);
+            continue;
+        }
+        index += 1;
+    }
+    ignored_tools
+}
+
+pub fn parse_auth_timeout_to(console: &mut impl std::io::Write, args: &[String]) -> u64 {
+    let Some(raw) = args
+        .iter()
+        .position(|arg| arg == "--auth-timeout")
+        .and_then(|index| args.get(index + 1))
+    else {
+        return 30_000;
+    };
+    let trimmed = raw.trim_start();
+    let (negative, unsigned) = match trimmed.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
+    };
+    let digits: String = unsigned
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .collect();
+    match digits.parse::<u64>() {
+        Ok(timeout_seconds) if !negative && timeout_seconds > 0 => {
+            log_to(
+                console,
+                &format!("Using auth callback timeout: {timeout_seconds} seconds"),
+                &[],
+            );
+            timeout_seconds.saturating_mul(1000)
+        }
+        _ => {
+            log_to(
+                console,
+                &format!(
+                    "Warning: Ignoring invalid auth timeout value: {raw}. Must be a positive number."
+                ),
+                &[],
+            );
+            30_000
+        }
+    }
+}
+
 pub fn get_server_url_hash(
     server_url: &str,
     authorize_resource: Option<&str>,
