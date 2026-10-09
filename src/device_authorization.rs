@@ -6,7 +6,11 @@ use crate::logging::debug_log;
 
 pub const DEVICE_CODE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
 
+const DEFAULT_POLL_INTERVAL_SECONDS: f64 = 5.0;
+
 const SLOW_DOWN_INCREMENT_SECONDS: f64 = 5.0;
+
+const DEFAULT_EXPIRY_SECONDS: f64 = 30.0 * 60.0;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormRequest {
@@ -22,6 +26,15 @@ pub struct DeviceAuthorizationResponse {
     pub verification_uri_complete: Option<String>,
     pub expires_in: Option<f64>,
     pub interval: Option<f64>,
+}
+
+pub fn polling_schedule(authorization: &DeviceAuthorizationResponse) -> (f64, f64) {
+    (
+        authorization
+            .interval
+            .unwrap_or(DEFAULT_POLL_INTERVAL_SECONDS),
+        authorization.expires_in.unwrap_or(DEFAULT_EXPIRY_SECONDS),
+    )
 }
 
 pub fn verification_prompt_lines(authorization: &DeviceAuthorizationResponse) -> Vec<String> {
