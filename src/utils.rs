@@ -6,6 +6,8 @@ use base64::engine::general_purpose::STANDARD;
 use crate::logging::log_to;
 
 pub const DEFAULT_CALLBACK_PATH: &str = "/oauth/callback";
+pub const MCP_REMOTE_ID_PATH: &str = "/.mcp-remote/id";
+const LONG_POLL_PATH: &str = "/wait-for-auth";
 
 const BASE64_SENTINEL_PREFIX: &str = "=?base64?";
 const BASE64_SENTINEL_SUFFIX: &str = "?=";
@@ -361,6 +363,36 @@ pub fn parse_callback_host_to(console: &mut impl std::io::Write, args: &[String]
         }
         None if cfg!(windows) => "127.0.0.1".to_string(),
         None => "localhost".to_string(),
+    }
+}
+
+pub fn parse_callback_path_to(console: &mut impl std::io::Write, args: &[String]) -> String {
+    let Some(value) = args
+        .iter()
+        .position(|arg| arg == "--callback-path")
+        .and_then(|index| args.get(index + 1))
+    else {
+        return DEFAULT_CALLBACK_PATH.to_string();
+    };
+    if !value.starts_with('/') {
+        log_to(
+            console,
+            &format!("Warning: Ignoring invalid callback path: {value}. It must start with '/'."),
+            &[],
+        );
+        DEFAULT_CALLBACK_PATH.to_string()
+    } else if value == LONG_POLL_PATH || value == MCP_REMOTE_ID_PATH {
+        log_to(
+            console,
+            &format!(
+                "Warning: Ignoring reserved callback path: {value}. It is used to coordinate concurrent instances."
+            ),
+            &[],
+        );
+        DEFAULT_CALLBACK_PATH.to_string()
+    } else {
+        log_to(console, &format!("Using callback path: {value}"), &[]);
+        value.clone()
     }
 }
 
