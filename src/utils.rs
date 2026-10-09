@@ -51,6 +51,30 @@ pub fn build_redirect_url(host: &str, port: u16, callback_path: &str) -> String 
     format!("http://{host}:{port}{callback_path}")
 }
 
+#[derive(serde::Deserialize)]
+struct ClientRegistration {
+    #[allow(dead_code)]
+    client_id: String,
+    redirect_uris: Vec<String>,
+}
+
+pub fn invalidate_mismatched_client_registration(server_url_hash: &str, redirect_url: &str) {
+    let Some(client_info) = crate::mcp_auth_config::read_json_file::<ClientRegistration>(
+        server_url_hash,
+        "client_info.json",
+    ) else {
+        return;
+    };
+    if client_info
+        .redirect_uris
+        .iter()
+        .any(|uri| uri == redirect_url)
+    {
+        return;
+    }
+    crate::mcp_auth_config::delete_config_file(server_url_hash, "client_info.json");
+}
+
 pub fn parse_authorize_params(args: &[String]) -> Result<BTreeMap<String, String>, String> {
     let mut params = BTreeMap::new();
     for pair in args.windows(2) {
