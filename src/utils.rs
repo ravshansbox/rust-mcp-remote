@@ -195,6 +195,41 @@ pub fn parse_authorize_params_to(
     Ok(params)
 }
 
+pub fn log_authorize_param_keys_to(console: &mut impl std::io::Write, args: &[String]) {
+    let mut keys: Vec<&str> = Vec::new();
+    for pair in args.windows(2) {
+        if pair[0] != "--authorize-param" {
+            continue;
+        }
+        if let Some((key, _)) = pair[1].split_once('=') {
+            let key = key.trim();
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+    }
+    if keys.is_empty() {
+        return;
+    }
+    let array_index = |key: &str| {
+        key.parse::<u32>()
+            .ok()
+            .filter(|index| *index != u32::MAX && index.to_string() == key)
+    };
+    let (mut integer_keys, string_keys): (Vec<&str>, Vec<&str>) =
+        keys.into_iter().partition(|key| array_index(key).is_some());
+    integer_keys.sort_by_key(|key| array_index(key));
+    integer_keys.extend(string_keys);
+    log_to(
+        console,
+        &format!(
+            "Using extra authorization parameters: {}",
+            integer_keys.join(", ")
+        ),
+        &[],
+    );
+}
+
 pub fn parse_seconds_option(args: &[String], flag: &str, allow_zero: bool) -> Option<u64> {
     parse_seconds_option_to(&mut std::io::stderr(), args, flag, allow_zero)
 }
