@@ -105,3 +105,11 @@ pub fn is_issued_state(state: &str) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
+
+const TOKEN_EXPIRY_MARGIN_MS: f64 = 60_000.0;
+
+pub fn is_token_expired(expires_at: Option<f64>, now_ms: f64) -> bool {
+    expires_at
+        .filter(|expires_at| *expires_at != 0.0 && !expires_at.is_nan())
+        .is_some_and(|expires_at| now_ms >= expires_at - TOKEN_EXPIRY_MARGIN_MS)
+}
