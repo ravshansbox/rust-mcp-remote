@@ -413,6 +413,22 @@ fn set_search_param(url: &mut Url, key: &str, value: &str) {
     }
 }
 
+pub fn apply_authorize_params(
+    authorization_url: &mut Url,
+    authorize_params: &std::collections::BTreeMap<String, String>,
+) {
+    for (key, value) in authorize_params {
+        set_search_param(authorization_url, key, value);
+    }
+
+    if !authorize_params.is_empty() {
+        debug_log(
+            "Added extra parameters to authorization URL",
+            &[json!({ "keys": authorize_params.keys().collect::<Vec<_>>() })],
+        );
+    }
+}
+
 pub fn apply_scope(
     authorization_url: &mut Url,
     sources: &ScopeSources,
