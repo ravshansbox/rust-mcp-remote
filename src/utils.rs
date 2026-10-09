@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 
+pub const DEFAULT_CALLBACK_PATH: &str = "/oauth/callback";
+
 const BASE64_SENTINEL_PREFIX: &str = "=?base64?";
 const BASE64_SENTINEL_SUFFIX: &str = "?=";
 const RESERVED_AUTHORIZE_PARAMS: [&str; 6] = [
@@ -43,6 +45,10 @@ pub fn calculate_default_port(server_url_hash: &str) -> Option<u16> {
         .collect();
     let offset = u16::from_str_radix(&hex_prefix, 16).ok()?;
     Some(3335 + offset % 45816)
+}
+
+pub fn build_redirect_url(host: &str, port: u16, callback_path: &str) -> String {
+    format!("http://{host}:{port}{callback_path}")
 }
 
 pub fn parse_authorize_params(args: &[String]) -> Result<BTreeMap<String, String>, String> {
