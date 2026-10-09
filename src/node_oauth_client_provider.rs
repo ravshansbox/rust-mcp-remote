@@ -11,6 +11,7 @@ use url::Url;
 use crate::device_authorization::DEVICE_CODE_GRANT_TYPE;
 use crate::logging::{debug_log, log};
 use crate::mcp_auth_config::{read_config_lease, read_json_file};
+use crate::utils::build_redirect_url;
 
 const URL_SAFE_ANY_PADDING: GeneralPurpose = GeneralPurpose::new(
     &alphabet::URL_SAFE,
@@ -568,4 +569,47 @@ pub fn apply_scope(
             &[json!({ "scopes": effective_scope })],
         );
     }
+}
+
+pub fn has_explicit_token_endpoint(
+    use_client_credentials: bool,
+    token_endpoint: Option<&str>,
+) -> bool {
+    use_client_credentials && token_endpoint.is_some_and(|endpoint| !endpoint.is_empty())
+}
+
+pub fn redirect_url(
+    has_explicit_token_endpoint: bool,
+    host: &str,
+    port: u16,
+    callback_path: &str,
+) -> Option<String> {
+    if has_explicit_token_endpoint {
+        return None;
+    }
+    Some(build_redirect_url(host, port, callback_path))
+}
+
+pub fn discovery_state(
+    use_client_credentials: bool,
+    token_endpoint: Option<&str>,
+    resource_server_url: &str,
+) -> Option<Value> {
+    if !has_explicit_token_endpoint(use_client_credentials, token_endpoint) {
+        return None;
+    }
+    let endpoint = Url::parse(token_endpoint?).ok()?;
+    let origin = endpoint.origin().ascii_serialization();
+    Some(json!({
+        "authorizationServerUrl": origin,
+        "authorizationServerMetadata": {
+            "issuer": origin,
+            "token_endpoint": endpoint.as_str(),
+            "grant_types_supported": ["client_credentials"],
+        },
+        "resourceMetadata": {
+            "resource": resource_server_url,
+            "authorization_servers": [origin],
+        },
+    }))
 }
