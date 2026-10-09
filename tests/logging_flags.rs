@@ -121,3 +121,49 @@ fn log_does_nothing_when_silent() {
         assert_eq!(console_text(console), "");
     });
 }
+
+#[test]
+fn log_also_writes_a_debug_line_when_debug_is_on() {
+    with_temporary_config_dir(|| {
+        set_debug(true);
+        set_current_server_url_hash(Some(HASH.to_string()));
+        let mut console = Vec::new();
+        log_to(&mut console, "Connected", &[json!(42)]);
+
+        let text = console_text(console);
+        let mut lines = text.lines();
+        assert_eq!(
+            lines.next(),
+            Some(format!("[{}] Connected 42", std::process::id()).as_str())
+        );
+        let debug_line = lines.next().expect("debug line");
+        assert!(
+            debug_line.ends_with(&format!("][{}] Connected 42", std::process::id())),
+            "{debug_line}"
+        );
+        assert_eq!(lines.next(), None);
+
+        let content =
+            std::fs::read_to_string(config_file_path(HASH, "debug.log")).expect("read debug log");
+        assert_eq!(content, format!("{debug_line}\n"));
+    });
+}
+
+#[test]
+fn log_when_silent_still_writes_the_debug_line_when_debug_is_on() {
+    with_temporary_config_dir(|| {
+        set_debug(true);
+        set_silent(true);
+        set_current_server_url_hash(Some(HASH.to_string()));
+        let mut console = Vec::new();
+        log_to(&mut console, "Quiet", &[]);
+
+        let text = console_text(console);
+        assert!(
+            text.ends_with(&format!("][{}] Quiet\n", std::process::id())),
+            "{text}"
+        );
+        assert_eq!(text.lines().count(), 1);
+        assert!(config_file_path(HASH, "debug.log").exists());
+    });
+}

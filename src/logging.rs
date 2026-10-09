@@ -142,9 +142,13 @@ pub fn debug_log(message: &str, args: &[Value]) {
 }
 
 pub fn log_to(console: &mut impl Write, message: &str, rest: &[Value]) {
-    if SILENT.load(std::sync::atomic::Ordering::Relaxed) {
-        return;
+    if !SILENT.load(std::sync::atomic::Ordering::Relaxed) {
+        write_log_line(console, message, rest);
     }
+    debug_log_to(console, message, rest);
+}
+
+fn write_log_line(console: &mut impl Write, message: &str, rest: &[Value]) {
     let mut line = format_log_line(std::process::id(), message);
     for value in rest {
         line.push(' ');
