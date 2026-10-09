@@ -185,3 +185,107 @@ pub fn input_required_retry_params(
     }
     Value::Object(params)
 }
+
+pub const PROTOCOL_VERSION_META_KEY: &str = "io.modelcontextprotocol/protocolVersion";
+pub const CLIENT_CAPABILITIES_META_KEY: &str = "io.modelcontextprotocol/clientCapabilities";
+pub const CLIENT_INFO_META_KEY: &str = "io.modelcontextprotocol/clientInfo";
+pub const SERVER_INFO_META_KEY: &str = "io.modelcontextprotocol/serverInfo";
+pub const LOG_LEVEL_META_KEY: &str = "io.modelcontextprotocol/logLevel";
+pub const SUBSCRIPTION_ID_META_KEY: &str = "io.modelcontextprotocol/subscriptionId";
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LegacyClientIdentity {
+    pub protocol_version: Option<String>,
+    pub capabilities: Option<Map<String, Value>>,
+    pub client_info: Option<Value>,
+}
+
+fn object_at(value: Option<&Value>) -> Map<String, Value> {
+    match value {
+        Some(Value::Object(map)) => map.clone(),
+        _ => Map::new(),
+    }
+}
+
+fn with_meta(message: &Value, meta: Map<String, Value>) -> Value {
+    let mut stamped = object_at(Some(message));
+    let mut params = object_at(message.get("params"));
+    params.insert("_meta".to_string(), Value::Object(meta));
+    stamped.insert("params".to_string(), Value::Object(params));
+    Value::Object(stamped)
+}
+
+fn keep_or(meta: &mut Map<String, Value>, key: &str, fallback: Value) {
+    let kept = match meta.get(key) {
+        Some(existing) if !existing.is_null() => existing.clone(),
+        _ => fallback,
+    };
+    meta.insert(key.to_string(), kept);
+}
+
+pub fn stamp_log_level(message: Value, log_level: Option<&str>) -> Value {
+    let Some(log_level) = log_level.filter(|level| !level.is_empty()) else {
+        return message;
+    };
+    let mut meta = object_at(message.get("params").and_then(|params| params.get("_meta")));
+    meta.insert(
+        LOG_LEVEL_META_KEY.to_string(),
+        Value::String(log_level.to_string()),
+    );
+    with_meta(&message, meta)
+}
+
+pub fn stamp_modern_meta(message: &Value, identity: &LegacyClientIdentity, version: &str) -> Value {
+    let mut meta = object_at(message.get("params").and_then(|params| params.get("_meta")));
+    keep_or(
+        &mut meta,
+        PROTOCOL_VERSION_META_KEY,
+        Value::String(version.to_string()),
+    );
+    keep_or(
+        &mut meta,
+        CLIENT_CAPABILITIES_META_KEY,
+        Value::Object(identity.capabilities.clone().unwrap_or_default()),
+    );
+    if let Some(client_info) = &identity.client_info {
+        keep_or(&mut meta, CLIENT_INFO_META_KEY, client_info.clone());
+    }
+    with_meta(message, meta)
+}
+
+pub fn subscriptions_listen_request(
+    id: &str,
+    identity: &LegacyClientIdentity,
+    version: &str,
+    notifications: &Map<String, Value>,
+) -> Value {
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "subscriptions/listen",
+        "params": { "notifications": notifications },
+    });
+    stamp_modern_meta(&request, identity, version)
+}
+
+pub fn strip_subscription_meta(message: Value) -> Value {
+    let Some(Value::Object(meta)) = message.get("params").and_then(|params| params.get("_meta"))
+    else {
+        return message;
+    };
+    if !meta.contains_key(SUBSCRIPTION_ID_META_KEY) {
+        return message;
+    }
+
+    let mut rest = meta.clone();
+    rest.shift_remove(SUBSCRIPTION_ID_META_KEY);
+    let mut params = object_at(message.get("params"));
+    if rest.is_empty() {
+        params.shift_remove("_meta");
+    } else {
+        params.insert("_meta".to_string(), Value::Object(rest));
+    }
+    let mut stripped = object_at(Some(&message));
+    stripped.insert("params".to_string(), Value::Object(params));
+    Value::Object(stripped)
+}
