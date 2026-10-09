@@ -37,6 +37,13 @@ pub fn polling_schedule(authorization: &DeviceAuthorizationResponse) -> (f64, f6
     )
 }
 
+pub fn error_detail(body: Option<&str>, status_text: &str) -> String {
+    match body {
+        Some(text) if !text.is_empty() => text.chars().take(500).collect(),
+        _ => status_text.to_string(),
+    }
+}
+
 pub fn verification_prompt_lines(authorization: &DeviceAuthorizationResponse) -> Vec<String> {
     let link = authorization
         .verification_uri_complete
