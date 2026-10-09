@@ -14,6 +14,41 @@ pub struct FormRequest {
     pub params: Vec<(String, String)>,
 }
 
+pub fn build_device_authorization_request(
+    auth_method: &str,
+    client_id: &str,
+    client_secret: Option<&str>,
+    scope: Option<&str>,
+    resource: Option<&str>,
+) -> Result<FormRequest, String> {
+    let mut headers = form_headers();
+    let mut params = Vec::new();
+    apply_client_authentication(
+        auth_method,
+        client_id,
+        client_secret,
+        &mut headers,
+        &mut params,
+    )?;
+    if let Some(scope) = scope.filter(|scope| !scope.is_empty()) {
+        set_pair(&mut params, "scope", scope, false);
+    }
+    if let Some(resource) = resource {
+        set_pair(&mut params, "resource", resource, false);
+    }
+    Ok(FormRequest { headers, params })
+}
+
+fn form_headers() -> Vec<(String, String)> {
+    vec![
+        (
+            "content-type".to_string(),
+            "application/x-www-form-urlencoded".to_string(),
+        ),
+        ("accept".to_string(), "application/json".to_string()),
+    ]
+}
+
 pub fn build_device_token_request(
     auth_method: &str,
     client_id: &str,
@@ -21,13 +56,7 @@ pub fn build_device_token_request(
     device_code: &str,
     resource: Option<&str>,
 ) -> Result<FormRequest, String> {
-    let mut headers = vec![
-        (
-            "content-type".to_string(),
-            "application/x-www-form-urlencoded".to_string(),
-        ),
-        ("accept".to_string(), "application/json".to_string()),
-    ];
+    let mut headers = form_headers();
     let mut params = vec![
         ("grant_type".to_string(), DEVICE_CODE_GRANT_TYPE.to_string()),
         ("device_code".to_string(), device_code.to_string()),
