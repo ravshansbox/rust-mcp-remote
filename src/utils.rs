@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 
+use crate::logging::log_to;
+
 pub const DEFAULT_CALLBACK_PATH: &str = "/oauth/callback";
 
 const BASE64_SENTINEL_PREFIX: &str = "=?base64?";
@@ -296,7 +298,15 @@ fn json_with_utf16_sorted_keys(record: &BTreeMap<String, String>) -> String {
     format!("{{{}}}", fields.join(","))
 }
 
-pub fn substitute_env_vars(value: &str) -> String {
+pub fn substitute_env_vars(value: &str, context: &str) -> String {
+    substitute_env_vars_to(&mut std::io::stderr(), value, context)
+}
+
+pub fn substitute_env_vars_to(
+    console: &mut impl std::io::Write,
+    value: &str,
+    context: &str,
+) -> String {
     let mut result = String::with_capacity(value.len());
     let mut rest = value;
     while let Some(start) = rest.find("${") {
@@ -310,13 +320,30 @@ pub fn substitute_env_vars(value: &str) -> String {
         }
         let name = &rest[start + 2..start + 2 + length];
         let end = start + 3 + length;
+        let placeholder = &rest[start..end];
         result.push_str(&rest[..start]);
         let environment_value = (!name.contains(['=', '\0']))
             .then(|| std::env::var_os(name))
             .flatten();
         match environment_value {
-            Some(environment_value) => result.push_str(&environment_value.to_string_lossy()),
-            None => result.push_str(&rest[start..end]),
+            Some(environment_value) => {
+                log_to(
+                    console,
+                    &format!("Replacing {placeholder} with environment value in {context}"),
+                    &[],
+                );
+                result.push_str(&environment_value.to_string_lossy())
+            }
+            None => {
+                log_to(
+                    console,
+                    &format!(
+                        "Warning: Environment variable '{name}' not found for {context}; leaving {placeholder} as it is."
+                    ),
+                    &[],
+                );
+                result.push_str(placeholder)
+            }
         }
         rest = &rest[end..];
     }
@@ -327,7 +354,7 @@ pub fn substitute_env_vars(value: &str) -> String {
 pub fn parse_json_with_env_vars(raw: &str, context: &str) -> Result<serde_json::Value, String> {
     let has_placeholder = raw.contains("${");
     let expanded = if has_placeholder {
-        substitute_env_vars(raw)
+        substitute_env_vars(raw, context)
     } else {
         raw.to_string()
     };
