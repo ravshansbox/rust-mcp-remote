@@ -777,6 +777,60 @@ pub fn parse_token_endpoint_to(
     Ok(Some(endpoint.to_string()))
 }
 
+pub fn parse_use_id_token_to(console: &mut impl std::io::Write, args: &[String]) -> bool {
+    parse_flag_to(
+        console,
+        args,
+        "--use-id-token",
+        "Using the ID token as the bearer credential",
+    )
+}
+
+pub fn parse_resource_to(
+    console: &mut impl std::io::Write,
+    args: &[String],
+) -> Result<(Option<String>, bool), String> {
+    let mut authorize_resource = None;
+    let mut skip_resource_parameter = args.iter().any(|arg| arg == "--disable-resource-parameter");
+    if let Some(index) = args.iter().position(|arg| arg == "--resource")
+        && let Some(value) = args.get(index + 1).map(|value| value.trim())
+    {
+        if value.is_empty() {
+            skip_resource_parameter = true;
+        } else {
+            authorize_resource = Some(value.to_string());
+        }
+    }
+    if skip_resource_parameter {
+        if let Some(resource) = authorize_resource.take() {
+            log_to(
+                console,
+                &format!(
+                    "Warning: --disable-resource-parameter overrides --resource {resource}; the resource parameter will be omitted."
+                ),
+                &[],
+            );
+        }
+        log_to(
+            console,
+            "Resource parameter disabled - it will be omitted from authorization and token requests",
+            &[],
+        );
+    } else if let Some(resource) = &authorize_resource {
+        if url::Url::parse(resource).is_err() {
+            return Err(format!(
+                "Invalid --resource value: \"{resource}\". RFC 8707 requires an absolute URI, e.g. https://example.com/mcp"
+            ));
+        }
+        log_to(
+            console,
+            &format!("Using authorize resource: {resource}"),
+            &[],
+        );
+    }
+    Ok((authorize_resource, skip_resource_parameter))
+}
+
 pub fn get_server_url_hash(
     server_url: &str,
     authorize_resource: Option<&str>,
