@@ -187,3 +187,7 @@ pub fn merge_headers(sources: &[&[(&str, &str)]]) -> Vec<(String, String)> {
     }
     merged.into_iter().map(|(_, entry)| entry).collect()
 }
+
+pub fn is_client_metadata_url(value: &str) -> bool {
+    url::Url::parse(value).is_ok_and(|url| url.scheme() == "https" && url.path() != "/")
+}
