@@ -849,4 +849,35 @@ impl NodeOAuthClientProvider {
     pub fn set_callback_port(&mut self, port: u16) {
         self.options.callback_port = port;
     }
+
+    pub fn has_explicit_token_endpoint(&self) -> bool {
+        has_explicit_token_endpoint(
+            self.use_client_credentials,
+            self.options.token_endpoint.as_deref(),
+        )
+    }
+
+    pub fn redirect_url(&self) -> Option<String> {
+        redirect_url(
+            self.has_explicit_token_endpoint(),
+            &self.options.host,
+            self.options.callback_port,
+            &self.callback_path,
+        )
+    }
+
+    pub fn discovery_state(&self) -> Option<Value> {
+        discovery_state(
+            self.use_client_credentials,
+            self.options.token_endpoint.as_deref(),
+            self.resource_server_url(),
+        )
+    }
+
+    pub fn resource_server_url(&self) -> &str {
+        resource_server_url(
+            self.options.resource_server_url.as_deref(),
+            &self.options.server_url,
+        )
+    }
 }
