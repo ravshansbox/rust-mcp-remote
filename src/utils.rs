@@ -729,6 +729,54 @@ pub fn parse_client_credentials_to(console: &mut impl std::io::Write, args: &[St
     )
 }
 
+pub fn parse_token_endpoint_to(
+    console: &mut impl std::io::Write,
+    args: &[String],
+    use_client_credentials: bool,
+) -> Result<Option<String>, String> {
+    let Some(index) = args.iter().position(|arg| arg == "--token-endpoint") else {
+        return Ok(None);
+    };
+    let value = match args.get(index + 1) {
+        Some(value) if !value.starts_with("--") => value.trim(),
+        _ => return Err("--token-endpoint requires an HTTPS URL".to_string()),
+    };
+    if !use_client_credentials {
+        return Err("--token-endpoint can only be used with --client-credentials".to_string());
+    }
+    let endpoint = url::Url::parse(value)
+        .map_err(|_| "Invalid --token-endpoint value. Expected an HTTPS URL.".to_string())?;
+    let is_loopback = endpoint.scheme() == "http"
+        && matches!(
+            endpoint.host_str(),
+            Some("localhost" | "127.0.0.1" | "[::1]")
+        );
+    if endpoint.scheme() != "https" && !is_loopback {
+        return Err(
+            "--token-endpoint must use HTTPS, except for an HTTP loopback endpoint".to_string(),
+        );
+    }
+    if !endpoint.username().is_empty()
+        || endpoint
+            .password()
+            .is_some_and(|password| !password.is_empty())
+        || endpoint
+            .fragment()
+            .is_some_and(|fragment| !fragment.is_empty())
+    {
+        return Err("--token-endpoint must not contain credentials or a URL fragment".to_string());
+    }
+    log_to(
+        console,
+        &format!(
+            "Using an explicit OAuth token endpoint at {}",
+            endpoint.origin().ascii_serialization()
+        ),
+        &[],
+    );
+    Ok(Some(endpoint.to_string()))
+}
+
 pub fn get_server_url_hash(
     server_url: &str,
     authorize_resource: Option<&str>,
