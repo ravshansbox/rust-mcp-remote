@@ -24,6 +24,25 @@ pub struct DeviceAuthorizationResponse {
     pub interval: Option<f64>,
 }
 
+pub fn verification_prompt_lines(authorization: &DeviceAuthorizationResponse) -> Vec<String> {
+    let link = authorization
+        .verification_uri_complete
+        .as_deref()
+        .unwrap_or(&authorization.verification_uri);
+    let mut lines = vec![
+        String::new(),
+        "To authorize this client, visit:".to_string(),
+        format!("  {link}"),
+    ];
+    if authorization.verification_uri_complete.is_none() {
+        lines.push(String::new());
+        lines.push(format!("And enter the code: {}", authorization.user_code));
+    }
+    lines.push(String::new());
+    lines.push("Waiting for approval...".to_string());
+    lines
+}
+
 pub fn parse_device_authorization_response(
     body: &Value,
 ) -> Result<DeviceAuthorizationResponse, String> {
