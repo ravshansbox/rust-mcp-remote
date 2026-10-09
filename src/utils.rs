@@ -130,6 +130,13 @@ pub fn invalidate_mismatched_client_registration_to(
 }
 
 pub fn parse_authorize_params(args: &[String]) -> Result<BTreeMap<String, String>, String> {
+    parse_authorize_params_to(&mut std::io::stderr(), args)
+}
+
+pub fn parse_authorize_params_to(
+    console: &mut impl std::io::Write,
+    args: &[String],
+) -> Result<BTreeMap<String, String>, String> {
     let mut params = BTreeMap::new();
     for pair in args.windows(2) {
         if pair[0] != "--authorize-param" {
@@ -148,6 +155,13 @@ pub fn parse_authorize_params(args: &[String]) -> Result<BTreeMap<String, String
             return Err(format!(
                 "--authorize-param cannot set \"{key}\": it is part of the authorization flow itself and is derived per request."
             ));
+        }
+        if key == "resource" {
+            log_to(
+                console,
+                "Warning: --authorize-param resource=... only applies to the authorization request. Use --resource so the token request agrees.",
+                &[],
+            );
         }
         params.insert(key.to_string(), value.to_string());
     }
