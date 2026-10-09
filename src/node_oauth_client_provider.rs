@@ -86,6 +86,38 @@ pub fn bearer_expires_at(use_id_token: bool, tokens: &Value) -> Option<f64> {
     }
 }
 
+pub fn as_bearer_tokens(
+    use_id_token: bool,
+    warned_about_missing_id_token: &mut bool,
+    tokens: Option<Value>,
+) -> Option<Value> {
+    let mut tokens = tokens?;
+    if !use_id_token {
+        return Some(tokens);
+    }
+
+    let Some(id_token) = tokens
+        .get("id_token")
+        .and_then(Value::as_str)
+        .filter(|id_token| !id_token.is_empty())
+        .map(str::to_owned)
+    else {
+        if !*warned_about_missing_id_token {
+            *warned_about_missing_id_token = true;
+            log(
+                "Warning: --use-id-token was passed but the authorization server issued no ID token, so the access token \
+                 is being sent instead. An ID token is only returned when `openid` is among the requested scopes.",
+                &[],
+            );
+        }
+        return Some(tokens);
+    };
+
+    debug_log("Presenting the ID token as the bearer credential", &[]);
+    tokens["access_token"] = Value::String(id_token);
+    Some(tokens)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OAuthError {
     pub code: String,
