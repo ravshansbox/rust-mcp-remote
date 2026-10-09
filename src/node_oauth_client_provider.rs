@@ -212,3 +212,13 @@ pub fn requested_scope(sources: &ScopeSources) -> Option<String> {
     debug_log("No source describes the scope to request", &[]);
     None
 }
+
+pub fn scope_request_changed(tokens: &Value, sources: &ScopeSources) -> bool {
+    let Some(obtained_for) = tokens.get("requested_scope").and_then(Value::as_str) else {
+        return false;
+    };
+    let Some(requested) = requested_scope(sources) else {
+        return false;
+    };
+    obtained_for != requested
+}
