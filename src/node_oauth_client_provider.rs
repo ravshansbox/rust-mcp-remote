@@ -7,7 +7,7 @@ use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig, URL_
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::logging::debug_log;
+use crate::logging::{debug_log, log};
 use crate::mcp_auth_config::{read_config_lease, read_json_file};
 
 const URL_SAFE_ANY_PADDING: GeneralPurpose = GeneralPurpose::new(
@@ -112,6 +112,51 @@ pub fn is_issued_state(state: &str) -> bool {
 }
 
 const TOKEN_EXPIRY_MARGIN_MS: f64 = 60_000.0;
+
+const TOKEN_STORM_LIMIT: usize = 20;
+const TOKEN_STORM_WINDOW_MS: f64 = 30_000.0;
+
+#[derive(Debug, Clone, Default)]
+pub struct TokenStormBrake {
+    recent_token_writes: Vec<f64>,
+}
+
+impl TokenStormBrake {
+    pub fn in_token_storm(&mut self, now_ms: f64) -> bool {
+        self.recent_token_writes
+            .retain(|at| now_ms - at < TOKEN_STORM_WINDOW_MS);
+        self.recent_token_writes.len() >= TOKEN_STORM_LIMIT
+    }
+
+    pub fn token_storm_error(&self) -> String {
+        let seconds = TOKEN_STORM_WINDOW_MS / 1000.0;
+        log(
+            &format!(
+                "Stopping: {TOKEN_STORM_LIMIT} access tokens were issued in the last {seconds}s and the MCP server \
+                 rejected them all. Asking for another would only repeat the exchange."
+            ),
+            &[],
+        );
+        debug_log(
+            "Token exchange loop detected",
+            &[
+                json!({ "writes": self.recent_token_writes.len(), "windowMs": TOKEN_STORM_WINDOW_MS }),
+            ],
+        );
+        format!(
+            "Stopped after {TOKEN_STORM_LIMIT} token exchanges in {seconds}s. The tokens being issued are not accepted \
+             by the MCP server - check that its audience and scopes match, or sign in again."
+        )
+    }
+
+    pub fn guard_against_token_storm(&mut self, now_ms: f64) -> Result<(), String> {
+        if self.in_token_storm(now_ms) {
+            return Err(self.token_storm_error());
+        }
+        self.recent_token_writes.push(now_ms);
+        Ok(())
+    }
+}
 
 pub fn is_token_expired(expires_at: Option<f64>, now_ms: f64) -> bool {
     expires_at
