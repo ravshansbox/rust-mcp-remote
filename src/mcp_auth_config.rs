@@ -99,3 +99,7 @@ pub fn write_text_file(server_url_hash: &str, filename: &str, text: &str) -> std
     ensure_config_dir()?;
     write_owner_only(&config_file_path(server_url_hash, filename), text)
 }
+
+pub fn delete_config_file(server_url_hash: &str, filename: &str) {
+    let _ = std::fs::remove_file(config_file_path(server_url_hash, filename));
+}
