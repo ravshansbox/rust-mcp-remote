@@ -116,6 +116,10 @@ pub fn is_token_expired(expires_at: Option<f64>, now_ms: f64) -> bool {
         .is_some_and(|expires_at| now_ms >= expires_at - TOKEN_EXPIRY_MARGIN_MS)
 }
 
+pub fn is_sibling_token_fresh(expires_at: Option<f64>, now_ms: f64) -> bool {
+    expires_at.is_some_and(|expires_at| now_ms < expires_at - TOKEN_EXPIRY_MARGIN_MS)
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScopeSources<'a> {
     pub static_oauth_client_metadata: Option<&'a Value>,
