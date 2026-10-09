@@ -191,3 +191,51 @@ pub fn merge_headers(sources: &[&[(&str, &str)]]) -> Vec<(String, String)> {
 pub fn is_client_metadata_url(value: &str) -> bool {
     url::Url::parse(value).is_ok_and(|url| url.scheme() == "https" && url.path() != "/")
 }
+
+pub fn get_server_url_hash(
+    server_url: &str,
+    authorize_resource: Option<&str>,
+    headers: &BTreeMap<String, String>,
+    authorize_params: &BTreeMap<String, String>,
+    client_metadata_url: Option<&str>,
+    token_endpoint: Option<&str>,
+) -> String {
+    let mut parts = vec![server_url.to_string()];
+    parts.extend(
+        authorize_resource
+            .filter(|value| !value.is_empty())
+            .map(String::from),
+    );
+    for record in [authorize_params, headers] {
+        if !record.is_empty() {
+            parts.push(json_with_utf16_sorted_keys(record));
+        }
+    }
+    parts.extend(
+        client_metadata_url
+            .filter(|value| !value.is_empty())
+            .map(String::from),
+    );
+    parts.extend(
+        token_endpoint
+            .filter(|value| !value.is_empty())
+            .map(String::from),
+    );
+    format!("{:x}", md5::compute(parts.join("|")))
+}
+
+fn json_with_utf16_sorted_keys(record: &BTreeMap<String, String>) -> String {
+    let mut entries: Vec<_> = record.iter().collect();
+    entries.sort_by(|(left, _), (right, _)| left.encode_utf16().cmp(right.encode_utf16()));
+    let fields: Vec<String> = entries
+        .into_iter()
+        .map(|(key, value)| {
+            format!(
+                "{}:{}",
+                serde_json::Value::from(key.as_str()),
+                serde_json::Value::from(value.as_str())
+            )
+        })
+        .collect();
+    format!("{{{}}}", fields.join(","))
+}
