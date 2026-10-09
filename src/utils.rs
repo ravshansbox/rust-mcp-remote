@@ -101,6 +101,27 @@ fn javascript_number(raw: &str) -> f64 {
     trimmed.parse().unwrap_or(f64::NAN)
 }
 
+pub fn parse_header_line(line: &str) -> Option<(String, String)> {
+    let (name, rest) = line.split_once(':')?;
+    let valid_name = !name.is_empty()
+        && name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'));
+    let value = rest.trim_start_matches(is_javascript_whitespace);
+    if !valid_name || value.contains(is_line_terminator) {
+        return None;
+    }
+    Some((name.to_string(), value.to_string()))
+}
+
+fn is_javascript_whitespace(character: char) -> bool {
+    matches!(
+        character,
+        '\t' | '\u{b}' | '\u{c}' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'
+    ) || is_line_terminator(character)
+}
+
 pub fn should_include_tool(ignore_patterns: &[String], tool_name: &str) -> bool {
     !ignore_patterns
         .iter()
