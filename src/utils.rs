@@ -16,6 +16,38 @@ const RESERVED_AUTHORIZE_PARAMS: [&str; 6] = [
     "code_challenge_method",
 ];
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct MirroredMcpHeaders {
+    pub method: String,
+    pub name: Option<String>,
+}
+
+fn mcp_name_source(method: &str) -> Option<&'static str> {
+    match method {
+        "tools/call" | "prompts/get" => Some("name"),
+        "resources/read" => Some("uri"),
+        _ => None,
+    }
+}
+
+pub fn mcp_headers_from_body(body: &str) -> Option<MirroredMcpHeaders> {
+    let message: serde_json::Value = serde_json::from_str(body).ok()?;
+    let method = message.as_object()?.get("method")?.as_str()?;
+    if method.is_empty() {
+        return None;
+    }
+
+    let name = mcp_name_source(method)
+        .and_then(|source| message.get("params")?.as_object()?.get(source)?.as_str())
+        .filter(|name| !name.is_empty())
+        .map(str::to_string);
+
+    Some(MirroredMcpHeaders {
+        method: method.to_string(),
+        name,
+    })
+}
+
 pub fn encode_mcp_header_value(value: &str) -> String {
     let visible = |byte: &u8| (0x21..=0x7e).contains(byte);
     let bytes = value.as_bytes();
