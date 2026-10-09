@@ -26,7 +26,10 @@ fn replaces_every_placeholder() {
     set_env("RMR_TEST_SECOND", "two");
 
     assert_eq!(
-        substitute_env_vars("${RMR_TEST_FIRST}-${RMR_TEST_SECOND}-${RMR_TEST_FIRST}"),
+        substitute_env_vars(
+            "${RMR_TEST_FIRST}-${RMR_TEST_SECOND}-${RMR_TEST_FIRST}",
+            "test"
+        ),
         "one-two-one"
     );
 }
@@ -34,20 +37,20 @@ fn replaces_every_placeholder() {
 #[test]
 fn leaves_a_missing_variable_as_it_is() {
     assert_eq!(
-        substitute_env_vars("Bearer ${RMR_TEST_NOT_SET}"),
+        substitute_env_vars("Bearer ${RMR_TEST_NOT_SET}", "test"),
         "Bearer ${RMR_TEST_NOT_SET}"
     );
 }
 
 #[test]
 fn does_not_expand_inherited_object_properties() {
-    assert_eq!(substitute_env_vars("${toString}"), "${toString}");
+    assert_eq!(substitute_env_vars("${toString}", "test"), "${toString}");
 }
 
 #[test]
 fn leaves_names_the_environment_cannot_hold() {
-    assert_eq!(substitute_env_vars("${A=B}"), "${A=B}");
-    assert_eq!(substitute_env_vars("${A\0B}"), "${A\0B}");
+    assert_eq!(substitute_env_vars("${A=B}", "test"), "${A=B}");
+    assert_eq!(substitute_env_vars("${A\0B}", "test"), "${A\0B}");
 }
 
 #[test]
@@ -55,14 +58,17 @@ fn matches_placeholders_as_the_typescript_pattern_does() {
     set_env("RMR_TEST_NESTED", "x");
     set_env("${RMR_TEST_NESTED", "inner");
 
-    assert_eq!(substitute_env_vars("${}"), "${}");
+    assert_eq!(substitute_env_vars("${}", "test"), "${}");
     assert_eq!(
-        substitute_env_vars("${RMR_TEST_NESTED"),
+        substitute_env_vars("${RMR_TEST_NESTED", "test"),
         "${RMR_TEST_NESTED"
     );
-    assert_eq!(substitute_env_vars("$${RMR_TEST_NESTED}}"), "$x}");
-    assert_eq!(substitute_env_vars("${}${RMR_TEST_NESTED}"), "${}x");
-    assert_eq!(substitute_env_vars("${${RMR_TEST_NESTED}}"), "inner}");
+    assert_eq!(substitute_env_vars("$${RMR_TEST_NESTED}}", "test"), "$x}");
+    assert_eq!(substitute_env_vars("${}${RMR_TEST_NESTED}", "test"), "${}x");
+    assert_eq!(
+        substitute_env_vars("${${RMR_TEST_NESTED}}", "test"),
+        "inner}"
+    );
 }
 
 #[test]
