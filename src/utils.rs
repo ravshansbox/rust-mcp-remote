@@ -974,6 +974,27 @@ pub fn validate_server_url_to(
     Ok(true)
 }
 
+pub fn parse_debug_and_silent_flags_to(console: &mut impl std::io::Write, args: &[String]) -> bool {
+    let debug = args.iter().any(|arg| arg == "--debug");
+    if debug {
+        crate::logging::set_debug(true);
+        log_to(
+            console,
+            "Debug mode enabled - detailed logs will be written to ~/.mcp-auth/",
+            &[],
+        );
+    }
+    if args.iter().any(|arg| arg == "--silent") {
+        crate::logging::set_silent(true);
+        log_to(
+            console,
+            "Silent mode enabled - stderr output will be suppressed, except when --debug is also enabled",
+            &[],
+        );
+    }
+    debug
+}
+
 pub fn announce_server_url_to(
     console: &mut impl std::io::Write,
     server_url: &str,
