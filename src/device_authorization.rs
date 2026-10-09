@@ -122,7 +122,7 @@ pub fn build_device_authorization_request(
     Ok(FormRequest { headers, params })
 }
 
-fn form_headers() -> Vec<(String, String)> {
+pub(crate) fn form_headers() -> Vec<(String, String)> {
     vec![
         (
             "content-type".to_string(),
