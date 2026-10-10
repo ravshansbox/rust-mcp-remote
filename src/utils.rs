@@ -1291,3 +1291,120 @@ pub fn parse_command_line_args_to(
         non_interactive_flow,
     }))
 }
+
+type RequestTransform =
+    Box<dyn FnMut(&serde_json::Value) -> Result<Option<serde_json::Value>, String>>;
+type ResponseTransform =
+    Box<dyn FnMut(&serde_json::Value, &serde_json::Value) -> Result<serde_json::Value, String>>;
+
+pub struct MessageTransformer {
+    pending_requests: std::collections::HashMap<String, serde_json::Value>,
+    transform_request_function: Option<RequestTransform>,
+    transform_response_function: Option<ResponseTransform>,
+}
+
+fn has_id(message: &serde_json::Value) -> bool {
+    message.get("id").is_some_and(|id| !id.is_null())
+}
+
+fn is_request(message: &serde_json::Value) -> bool {
+    has_id(message) && message.get("method").is_some()
+}
+
+fn is_response(message: &serde_json::Value) -> bool {
+    has_id(message) && message.get("method").is_none()
+}
+
+fn pending_key(id: &serde_json::Value) -> String {
+    id.to_string()
+}
+
+fn report_transform_failure(
+    console: &mut impl std::io::Write,
+    message: &serde_json::Value,
+    error: &str,
+) {
+    log_to(
+        console,
+        "Error transforming message, forwarding it unchanged:",
+        &[serde_json::Value::String(error.to_string())],
+    );
+    crate::logging::debug_log_to(
+        console,
+        "Message transform failed",
+        &[serde_json::json!({
+            "id": message.get("id"),
+            "method": message.get("method"),
+            "error": error,
+        })],
+    );
+}
+
+impl MessageTransformer {
+    pub fn new(
+        transform_request_function: Option<RequestTransform>,
+        transform_response_function: Option<ResponseTransform>,
+    ) -> Self {
+        Self {
+            pending_requests: std::collections::HashMap::new(),
+            transform_request_function,
+            transform_response_function,
+        }
+    }
+
+    pub fn intercept_request_to(
+        &mut self,
+        console: &mut impl std::io::Write,
+        message: serde_json::Value,
+    ) -> Option<serde_json::Value> {
+        if !is_request(&message) {
+            return Some(message);
+        }
+        self.pending_requests
+            .insert(pending_key(&message["id"]), message.clone());
+        let Some(transform) = self.transform_request_function.as_mut() else {
+            return Some(message);
+        };
+        match transform(&message) {
+            Ok(transformed) => transformed,
+            Err(error) => {
+                report_transform_failure(console, &message, &error);
+                Some(message)
+            }
+        }
+    }
+
+    pub fn intercept_response_to(
+        &mut self,
+        console: &mut impl std::io::Write,
+        message: serde_json::Value,
+    ) -> serde_json::Value {
+        if !is_response(&message) {
+            return message;
+        }
+        let Some(original_request) = self.pending_requests.remove(&pending_key(&message["id"]))
+        else {
+            return message;
+        };
+        let Some(transform) = self.transform_response_function.as_mut() else {
+            return message;
+        };
+        match transform(&original_request, &message) {
+            Ok(transformed) => transformed,
+            Err(error) => {
+                report_transform_failure(console, &message, &error);
+                message
+            }
+        }
+    }
+
+    pub fn release(&mut self, id: &serde_json::Value, only: Option<&serde_json::Value>) {
+        let key = pending_key(id);
+        if let Some(only) = only
+            && self.pending_requests.get(&key) != Some(only)
+        {
+            return;
+        }
+        self.pending_requests.remove(&key);
+    }
+}
