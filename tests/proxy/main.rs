@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 mod era_bridging;
+mod input_required;
 mod stream_reconnect;
 
 /// An in-memory transport: what the proxy sends is recorded on `sent`, and
