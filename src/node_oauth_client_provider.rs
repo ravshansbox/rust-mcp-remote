@@ -13,7 +13,7 @@ use crate::device_authorization::DEVICE_CODE_GRANT_TYPE;
 use crate::logging::{debug_log, iso_timestamp, log};
 use crate::mcp_auth_config::{
     acquire_config_lease, delete_config_file, delete_stale_config_files, read_config_lease,
-    read_json_file, read_text_file, write_json_file, write_text_file,
+    read_json_file, read_text_file, release_config_lease, write_json_file, write_text_file,
 };
 use crate::utils::{MCP_REMOTE_VERSION, build_redirect_url};
 
@@ -1220,6 +1220,34 @@ impl NodeOAuthClientProvider {
                 Some(UNCOORDINATED.to_string())
             }
         }
+    }
+
+    pub fn refresh_once_per_host(
+        &self,
+        refresh_token: &str,
+        do_refresh_tokens: impl FnOnce(&str) -> Option<Value>,
+    ) -> Option<Value> {
+        let lease = match self.take_refresh_lease() {
+            Some(lease) => lease,
+            None => match await_refresh_by_sibling(&self.server_url_hash) {
+                SiblingRefresh::Tokens(tokens) => {
+                    debug_log("Another instance refreshed the token", &[]);
+                    return Some(tokens);
+                }
+                SiblingRefresh::Released => return None,
+                SiblingRefresh::Abandoned => self.take_refresh_lease()?,
+            },
+        };
+
+        let stored_refresh_token = self
+            .stored_tokens()
+            .and_then(|stored| stored.get("refresh_token")?.as_str().map(str::to_string));
+        let result = do_refresh_tokens(stored_refresh_token.as_deref().unwrap_or(refresh_token));
+
+        if lease != UNCOORDINATED {
+            release_config_lease(&self.server_url_hash, REFRESH_LEASE_FILE, &lease);
+        }
+        result
     }
 
     pub fn read_stored_tokens(&mut self, now_ms: f64) -> Option<StoredTokens> {
