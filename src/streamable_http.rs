@@ -161,6 +161,8 @@ pub struct HttpSettings {
     pub body_timeout: Option<Duration>,
     pub headers_timeout: Option<Duration>,
     pub force_ipv4: bool,
+    /// `--enable-proxy`: use the HTTP_PROXY/HTTPS_PROXY environment variables.
+    pub use_env_proxy: bool,
 }
 
 static HTTP_SETTINGS: std::sync::OnceLock<HttpSettings> = std::sync::OnceLock::new();
@@ -197,6 +199,9 @@ impl reqwest::dns::Resolve for Ipv4Only {
 pub fn client_builder() -> reqwest::ClientBuilder {
     let settings = http_settings();
     let mut builder = reqwest::Client::builder();
+    if !settings.use_env_proxy {
+        builder = builder.no_proxy();
+    }
     if let Some(timeout) = enabled(settings.connect_timeout) {
         builder = builder.connect_timeout(timeout);
     }

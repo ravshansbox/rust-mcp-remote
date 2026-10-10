@@ -174,6 +174,7 @@ pub fn configure_network(args: &CommandLineArgs) {
         body_timeout: milliseconds(options.body_timeout_ms),
         headers_timeout: milliseconds(options.headers_timeout_ms),
         force_ipv4: options.force_ipv4,
+        use_env_proxy: args.enable_proxy,
     });
 }
 

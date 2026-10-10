@@ -174,6 +174,15 @@ async fn exit_within(
     extra_arguments: &[&str],
     limit: std::time::Duration,
 ) -> Option<std::process::ExitStatus> {
+    exit_within_env(url, extra_arguments, &[], limit).await
+}
+
+async fn exit_within_env(
+    url: &str,
+    extra_arguments: &[&str],
+    environment: &[(&str, &str)],
+    limit: std::time::Duration,
+) -> Option<std::process::ExitStatus> {
     use std::process::Stdio;
 
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_rust-mcp-remote"))
@@ -184,6 +193,7 @@ async fn exit_within(
             "MCP_REMOTE_CONFIG_DIR",
             std::env::temp_dir().join("rust-mcp-remote-main-cli-network"),
         )
+        .envs(environment.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -279,11 +289,34 @@ async fn gives_up_on_an_unreachable_host_after_the_connect_timeout() {
 
 #[tokio::test]
 async fn connects_over_ipv4_only_with_the_ipv4_flag() {
+    use std::sync::atomic::Ordering;
+
+    let (port, connections) = counting_404_server("[::1]:0").await;
+    let url = format!("http://localhost:{port}/mcp");
+    let limit = std::time::Duration::from_secs(20);
+
+    exit_within(&url, &[], limit).await.expect("the proxy hung");
+    assert!(
+        connections.load(Ordering::SeqCst) > 0,
+        "without --ipv4 the proxy should reach the IPv6 loopback"
+    );
+
+    connections.store(0, Ordering::SeqCst);
+    exit_within(&url, &["--ipv4"], limit)
+        .await
+        .expect("the proxy hung");
+    assert_eq!(connections.load(Ordering::SeqCst), 0);
+}
+
+/// A listener that answers every request with a 404, counting the connections it receives.
+async fn counting_404_server(
+    address: &str,
+) -> (u16, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    let listener = tokio::net::TcpListener::bind("[::1]:0").await.unwrap();
+    let listener = tokio::net::TcpListener::bind(address).await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let connections = Arc::new(AtomicUsize::new(0));
     let counted = Arc::clone(&connections);
@@ -301,18 +334,32 @@ async fn connects_over_ipv4_only_with_the_ipv4_flag() {
             });
         }
     });
-    let url = format!("http://localhost:{port}/mcp");
+    (port, connections)
+}
+
+#[tokio::test]
+async fn uses_the_environment_proxy_only_with_enable_proxy() {
+    use std::sync::atomic::Ordering;
+
+    let (server_port, _) = counting_404_server("127.0.0.1:0").await;
+    let (proxy_port, proxied) = counting_404_server("127.0.0.1:0").await;
+    let url = format!("http://127.0.0.1:{server_port}/mcp");
+    let proxy = format!("http://127.0.0.1:{proxy_port}");
+    let environment = [
+        ("HTTP_PROXY", proxy.as_str()),
+        ("http_proxy", proxy.as_str()),
+        ("NO_PROXY", ""),
+        ("no_proxy", ""),
+    ];
     let limit = std::time::Duration::from_secs(20);
 
-    exit_within(&url, &[], limit).await.expect("the proxy hung");
-    assert!(
-        connections.load(Ordering::SeqCst) > 0,
-        "without --ipv4 the proxy should reach the IPv6 loopback"
-    );
-
-    connections.store(0, Ordering::SeqCst);
-    exit_within(&url, &["--ipv4"], limit)
+    exit_within_env(&url, &[], &environment, limit)
         .await
         .expect("the proxy hung");
-    assert_eq!(connections.load(Ordering::SeqCst), 0);
+    assert_eq!(proxied.load(Ordering::SeqCst), 0);
+
+    exit_within_env(&url, &["--enable-proxy"], &environment, limit)
+        .await
+        .expect("the proxy hung");
+    assert!(proxied.load(Ordering::SeqCst) > 0);
 }
