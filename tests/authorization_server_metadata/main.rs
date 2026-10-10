@@ -4,3 +4,7 @@
 pub static GLOBAL_STATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 mod authorization_server_metadata;
+mod fetch;
+#[allow(dead_code)]
+#[path = "../streamable_http/test_server.rs"]
+mod test_server;

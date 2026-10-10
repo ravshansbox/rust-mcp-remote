@@ -133,3 +133,74 @@ pub fn open_browser_with(
 pub fn open_browser(url: &str) -> bool {
     open_browser_with(url, std::env::consts::OS, launch_helper)
 }
+
+/// JavaScript's encodeURIComponent.
+pub fn encode_uri_component(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&byte) {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+/// strict-url-sanitise's sanitizeUrl: only http(s) URLs with a plain hostname get through, and
+/// every other component is re-encoded so nothing in it can reach the opener as syntax.
+pub fn sanitize_url(raw: &str) -> Result<String, String> {
+    let invalid = || format!("Invalid url to pass to open(): {raw}");
+    let mut url = url::Url::parse(raw).map_err(|_| invalid())?;
+    if url.scheme() != "https" && url.scheme() != "http" {
+        return Err(invalid());
+    }
+    let hostname = url.host_str().unwrap_or_default().to_owned();
+    if hostname != encode_uri_component(&hostname) {
+        return Err(invalid());
+    }
+    if !url.username().is_empty() {
+        let username = encode_uri_component(url.username());
+        url.set_username(&username).map_err(|_| invalid())?;
+    }
+    if let Some(password) = url.password().filter(|password| !password.is_empty()) {
+        let password = encode_uri_component(password);
+        url.set_password(Some(&password)).map_err(|_| invalid())?;
+    }
+    let path = url.path().to_owned();
+    let (first, rest) = path.split_at(path.len().min(1));
+    let path = format!(
+        "{first}{}",
+        encode_uri_component(rest)
+            .replace("%2F", "/")
+            .replace("%2f", "/")
+    );
+    url.set_path(&path);
+    if url.query().is_some_and(|query| !query.is_empty()) {
+        let query = url
+            .query_pairs()
+            .map(|(key, value)| {
+                if value.is_empty() {
+                    encode_uri_component(&key)
+                } else {
+                    format!(
+                        "{}={}",
+                        encode_uri_component(&key),
+                        encode_uri_component(&value)
+                    )
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+        url.set_query(Some(&query));
+    } else {
+        url.set_query(None);
+    }
+    match url.fragment().map(str::to_owned) {
+        Some(fragment) if !fragment.is_empty() => {
+            url.set_fragment(Some(&encode_uri_component(&fragment)))
+        }
+        _ => url.set_fragment(None),
+    }
+    Ok(url.to_string())
+}
