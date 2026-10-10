@@ -1110,6 +1110,40 @@ impl NodeOAuthClientProvider {
         )
     }
 
+    pub fn prepare_token_request(
+        &mut self,
+        scope: Option<&str>,
+        now_ms: f64,
+    ) -> Result<Option<Vec<(&'static str, String)>>, String> {
+        if !self.has_explicit_token_endpoint() {
+            return Ok(None);
+        }
+        if self.token_storm_brake.in_token_storm(now_ms) {
+            return Err(self.token_storm_brake.token_storm_error());
+        }
+        let client_information = self.client_information();
+        let sources = TokenRequestSources {
+            has_explicit_token_endpoint: true,
+            token_endpoint: self.options.token_endpoint.as_deref(),
+            client_secret: client_information
+                .as_ref()
+                .and_then(|client| client.get("client_secret"))
+                .and_then(Value::as_str),
+            static_scope: self
+                .static_oauth_client_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("scope"))
+                .and_then(Value::as_str),
+            scope,
+        };
+        prepare_token_request(
+            &sources,
+            &mut self.token_storm_brake,
+            now_ms,
+            &mut self.www_authenticate_scope,
+        )
+    }
+
     pub fn discovery_state(&self) -> Option<Value> {
         discovery_state(
             self.use_client_credentials,
