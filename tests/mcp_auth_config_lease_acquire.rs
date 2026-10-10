@@ -189,3 +189,42 @@ fn the_lease_is_readable_only_by_its_owner() {
         assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
     });
 }
+
+fn debug_log_lines_while(action: impl FnOnce()) -> Vec<String> {
+    rust_mcp_remote::logging::set_debug(true);
+    rust_mcp_remote::logging::set_current_server_url_hash(Some(HASH.to_string()));
+    action();
+    rust_mcp_remote::logging::set_debug(false);
+    rust_mcp_remote::logging::set_current_server_url_hash(None);
+    std::fs::read_to_string(config_file_path(HASH, "debug.log"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn clearing_an_abandoned_lease_is_logged_with_its_owner() {
+    with_temporary_config_dir(|| {
+        write_lease(json!({ "pid": DEAD_PID, "nonce": "theirs", "at": now_millis() as u64 }));
+        let lines = debug_log_lines_while(|| {
+            acquire_config_lease(HASH, FILENAME, TTL).expect("config dir");
+        });
+        assert!(lines.iter().any(|line| line.ends_with(&format!(
+            "Clearing an abandoned lease {{\"filename\":\"{FILENAME}\",\"heldBy\":{DEAD_PID}}}"
+        ))));
+    });
+}
+
+#[test]
+fn clearing_an_unreadable_lease_is_logged_without_an_owner() {
+    with_temporary_config_dir(|| {
+        write_text_file(HASH, FILENAME, "not json").expect("write lease");
+        let lines = debug_log_lines_while(|| {
+            acquire_config_lease(HASH, FILENAME, TTL).expect("config dir");
+        });
+        assert!(lines.iter().any(|line| line.ends_with(&format!(
+            "Clearing an abandoned lease {{\"filename\":\"{FILENAME}\"}}"
+        ))));
+    });
+}

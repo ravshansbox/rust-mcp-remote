@@ -213,11 +213,15 @@ pub fn acquire_config_lease(
                 if error.kind() != std::io::ErrorKind::AlreadyExists || attempt > 0 {
                     return Ok(None);
                 }
-                if read_config_lease(server_url_hash, filename, max_age)
-                    .is_some_and(|held| held.live)
-                {
+                let held = read_config_lease(server_url_hash, filename, max_age);
+                if held.as_ref().is_some_and(|held| held.live) {
                     return Ok(None);
                 }
+                let mut details = serde_json::json!({ "filename": filename });
+                if let Some(held) = held {
+                    details["heldBy"] = held.pid.into();
+                }
+                crate::logging::debug_log("Clearing an abandoned lease", &[details]);
                 let _ = std::fs::remove_file(&file_path);
             }
         }
