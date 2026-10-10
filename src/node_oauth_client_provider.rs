@@ -1582,6 +1582,32 @@ impl NodeOAuthClientProvider {
         }
     }
 
+    pub fn authorize_with_client_credentials(
+        &mut self,
+        now_ms: f64,
+        get_authorization_server_metadata: impl FnOnce() -> Result<Option<Value>, String>,
+        request_tokens: impl FnOnce(&Value, &Value, Option<&str>, Option<&Url>) -> Result<Value, String>,
+    ) -> Result<(), String> {
+        let Some(metadata) = get_authorization_server_metadata()? else {
+            return Err("Could not discover the authorization server metadata, so there is no token endpoint to ask".to_string());
+        };
+
+        let Some(client_information) = self.client_information() else {
+            return Err("No OAuth client credentials were supplied; pass them with --static-oauth-client-info".to_string());
+        };
+
+        let scope = requested_scope(&self.scope_sources()).filter(|scope| !scope.is_empty());
+        let resource = self.device_authorization_resource()?;
+        let tokens = request_tokens(
+            &metadata,
+            &client_information,
+            scope.as_deref(),
+            resource.as_ref(),
+        )?;
+
+        self.save_tokens(&tokens, now_ms)
+    }
+
     pub fn client_metadata(&self) -> Value {
         let redirect_url = self.redirect_url();
         let effective_scope = self.effective_scope();
