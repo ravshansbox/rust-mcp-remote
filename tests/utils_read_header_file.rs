@@ -1,14 +1,20 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rust_mcp_remote::utils::read_header_file_to;
+
+static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
 fn header_file(name: &str, contents: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("time")
         .as_nanos();
-    let directory =
-        std::env::temp_dir().join(format!("mcp-remote-headers-{}-{nanos}", std::process::id()));
+    let sequence = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+    let directory = std::env::temp_dir().join(format!(
+        "mcp-remote-headers-{}-{nanos}-{sequence}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&directory).expect("directory");
     let path = directory.join(name);
     std::fs::write(&path, contents).expect("write");
