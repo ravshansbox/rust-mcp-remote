@@ -1,5 +1,4 @@
-use std::cell::Cell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use rust_mcp_remote::cookie_jar::CookieJar;
@@ -155,9 +154,9 @@ fn max_age_is_preferred_to_expires() {
 
 #[test]
 fn a_cookie_is_dropped_once_its_lifetime_runs_out() {
-    let now = Rc::new(Cell::new(SystemTime::now()));
-    let clock = Rc::clone(&now);
-    let mut jar = CookieJar::with_clock(move || clock.get());
+    let now = Arc::new(Mutex::new(SystemTime::now()));
+    let clock = Arc::clone(&now);
+    let mut jar = CookieJar::with_clock(move || *clock.lock().unwrap());
     jar.capture(
         "https://mcp.example.com/mcp",
         &["stick=1; Path=/; Max-Age=60"],
@@ -167,7 +166,7 @@ fn a_cookie_is_dropped_once_its_lifetime_runs_out() {
         Some("stick=1")
     );
 
-    now.set(now.get() + Duration::from_secs(61));
+    *now.lock().unwrap() += Duration::from_secs(61);
     assert_eq!(jar.header("https://mcp.example.com/mcp"), None);
 }
 

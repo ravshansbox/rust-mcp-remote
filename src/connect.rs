@@ -3,13 +3,15 @@
 //! was issued, or a server that speaks the other transport.
 //!
 //! Not yet ported: the with-client mode client.ts uses, the `auto` protocol mode's version
-//! negotiation in the probe, and the SSE stream's reconnect notice.
+//! negotiation in the probe.
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use reqwest::Url;
+use reqwest::header::{COOKIE, HeaderValue};
+use reqwest::{Request, Url};
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -22,9 +24,10 @@ use crate::protocol_era::{LATEST_PROTOCOL_VERSION, ProtocolMode, SUPPORTED_PROTO
 use crate::sse_client::{SseClientOptions, SseClientTransport};
 use crate::stdio::TransportEvent;
 use crate::streamable_http::{
-    BoxFuture, StreamableHttpClientTransport, StreamableHttpOptions, TransportError, TransportOAuth,
+    BoxFuture, FetchFn, StreamableHttpClientTransport, StreamableHttpOptions, TransportError,
+    TransportOAuth, default_fetch,
 };
-use crate::utils::TransportStrategy;
+use crate::utils::{TransportStrategy, capture_cookies, cookie_header_for, fetch_with_mcp_headers};
 
 const REASON_AUTH_NEEDED: &str = "authentication-needed";
 const REASON_TRANSPORT_FALLBACK: &str = "falling-back-to-alternate-transport";
@@ -157,10 +160,53 @@ impl RemoteTransport {
     }
 }
 
+/// `onStreamReconnect`: set by the proxy, called when the SSE stream comes back on a new
+/// session after it dropped. The SDK raises no event for that, so the stream fetch infers it
+/// from the stream opening again.
+pub type StreamReconnectHook = Arc<std::sync::Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>;
+
 /// The connected remote transport and the events it delivers.
 pub struct RemoteConnection {
     pub transport: RemoteTransport,
     pub events: UnboundedReceiver<TransportEvent>,
+    /// Only ever called for an SSE transport.
+    pub on_stream_reconnect: StreamReconnectHook,
+}
+
+/// `eventSourceInit.fetch`: opens the SSE stream with the jar's cookies (the stream is usually
+/// where a balancer plants its cookie) and keeps the ones it sets. Every stream that opens after
+/// the first is a reconnect, and is reported through `on_stream_reconnect`; a failed attempt is
+/// not, since another follows it.
+fn event_source_fetch(on_stream_reconnect: StreamReconnectHook) -> FetchFn {
+    let fetch = default_fetch();
+    let opened = Arc::new(AtomicUsize::new(0));
+    Arc::new(move |mut request: Request| {
+        let url = request.url().to_string();
+        if let Some(cookie) = cookie_header_for(&url)
+            && let Ok(value) = HeaderValue::from_str(&cookie)
+            && !request.headers().contains_key(COOKIE)
+        {
+            request.headers_mut().insert(COOKIE, value);
+        }
+        let response = fetch(request);
+        let opened = Arc::clone(&opened);
+        let on_stream_reconnect = Arc::clone(&on_stream_reconnect);
+        Box::pin(async move {
+            let response = response.await?;
+            capture_cookies(&url, &response);
+            if response.status().is_success() && opened.fetch_add(1, Ordering::SeqCst) >= 1 {
+                log("Remote SSE stream reconnected", &[]);
+                let hook = on_stream_reconnect
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .clone();
+                if let Some(hook) = hook {
+                    hook();
+                }
+            }
+            Ok(response)
+        })
+    })
 }
 
 /// What connectToRemoteServer takes besides the auth provider and the initializer.
@@ -242,6 +288,7 @@ fn http_transport(
         StreamableHttpOptions {
             headers: headers.to_vec(),
             oauth: Some(auth.transport_oauth()),
+            fetch: Some(fetch_with_mcp_headers(None)),
             ..StreamableHttpOptions::default()
         },
     )
@@ -263,12 +310,15 @@ async fn attempt(
         "Attempting to connect to remote server",
         &[json!({"sseTransport": sse_transport})],
     );
+    let on_stream_reconnect: StreamReconnectHook = Arc::default();
     if sse_transport {
         let (transport, events) = SseClientTransport::new(
             url.clone(),
             SseClientOptions {
                 headers: headers.to_vec(),
                 oauth: Some(auth.transport_oauth()),
+                fetch: Some(fetch_with_mcp_headers(None)),
+                event_source_fetch: Some(event_source_fetch(Arc::clone(&on_stream_reconnect))),
                 ..SseClientOptions::default()
             },
         );
@@ -283,6 +333,7 @@ async fn attempt(
         return Ok(RemoteConnection {
             transport: RemoteTransport::Sse(transport),
             events,
+            on_stream_reconnect,
         });
     }
 
@@ -311,6 +362,7 @@ async fn attempt(
     Ok(RemoteConnection {
         transport: RemoteTransport::Http(transport),
         events,
+        on_stream_reconnect,
     })
 }
 

@@ -17,6 +17,7 @@ use rust_mcp_remote::stdio::StdioServerTransport;
 use rust_mcp_remote::streamable_http::fetch_with_headers;
 use rust_mcp_remote::utils::{
     CommandLineArgs, discover_oauth_server_info, early_exit_output, parse_command_line_args_to,
+    set_cookies_enabled,
 };
 use serde_json::{Value, json};
 
@@ -164,6 +165,7 @@ async fn run_proxy(args: CommandLineArgs) -> Result<(), String> {
     let RemoteConnection {
         transport: remote,
         events: remote_events,
+        ..
     } = match connected {
         Ok(connection) => connection,
         Err(error) => {
@@ -277,6 +279,7 @@ async fn main() {
             std::process::exit(1);
         }
     };
+    set_cookies_enabled(args.cookies_enabled);
     if let Err(error) = run_proxy(args).await {
         log("Fatal error:", &[Value::String(error)]);
         std::process::exit(1);
