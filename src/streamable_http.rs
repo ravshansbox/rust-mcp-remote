@@ -193,7 +193,7 @@ pub fn fetch_error(error: reqwest::Error) -> String {
     message
 }
 
-fn status_text(response: &Response) -> String {
+pub fn status_text(response: &Response) -> String {
     response
         .status()
         .canonical_reason()
@@ -234,7 +234,7 @@ fn messages_of(message: &Value) -> Vec<&Value> {
     }
 }
 
-fn parse_jsonrpc_message(value: Value) -> Result<Value, String> {
+pub fn parse_jsonrpc_message(value: Value) -> Result<Value, String> {
     let is_message = value.get("jsonrpc").and_then(Value::as_str) == Some("2.0")
         && (value.get("method").is_some_and(Value::is_string) || is_response(&value));
     if is_message {
@@ -264,7 +264,7 @@ fn mcp_name_field(method: &str) -> Option<&'static str> {
     }
 }
 
-fn set_header(headers: &mut HeaderMap, name: &str, value: &str) {
+pub fn set_header(headers: &mut HeaderMap, name: &str, value: &str) {
     if let (Ok(name), Ok(value)) = (
         HeaderName::from_bytes(name.as_bytes()),
         HeaderValue::from_str(value),
@@ -324,8 +324,50 @@ pub fn is_within_origin(from: &Url, to: &Url) -> bool {
         && to.port().is_none()
 }
 
+/// The SDK's `fetchWithinOrigin`: sends a request, following only redirects that keep the
+/// method and stay within the origin. `closed` aborts it, as the transport's signal does.
+pub async fn fetch_within_origin(
+    fetch: &FetchFn,
+    url: &Url,
+    method: Method,
+    headers: HeaderMap,
+    body: Option<String>,
+    closed: &AtomicBool,
+) -> Result<Response, TransportError> {
+    let mut current = url.clone();
+    let mut followed = 0;
+    loop {
+        let mut request = Request::new(method.clone(), current.clone());
+        *request.headers_mut() = headers.clone();
+        if let Some(body) = &body {
+            *request.body_mut() = Some(body.clone().into());
+        }
+        if closed.load(Ordering::SeqCst) {
+            return Err(TransportError::Other(
+                "This operation was aborted".to_owned(),
+            ));
+        }
+        let response = fetch(request).await.map_err(TransportError::Other)?;
+        let Some(target) = redirect_target(&current, &response) else {
+            return Ok(response);
+        };
+        if followed == MAX_REDIRECTS {
+            return Ok(response);
+        }
+        let keeps_method = method == Method::GET || matches!(response.status().as_u16(), 307 | 308);
+        let keeps_userinfo = (target.username().is_empty() && target.password().is_none())
+            || (target.username() == current.username() && target.password() == current.password());
+        if !keeps_method || !keeps_userinfo || !is_within_origin(&current, &target) {
+            return Ok(response);
+        }
+        let _ = response.bytes().await;
+        current = target;
+        followed += 1;
+    }
+}
+
 /// Error text for a redirect that was not followed, or None for any other response.
-fn unfollowed_redirect(url: &Url, response: &Response) -> Option<String> {
+pub fn unfollowed_redirect(url: &Url, response: &Response) -> Option<String> {
     let mut target = redirect_target(url, response)?;
     let _ = target.set_username("");
     let _ = target.set_password(None);
@@ -606,38 +648,7 @@ impl Inner {
         headers: HeaderMap,
         body: Option<String>,
     ) -> Result<Response, TransportError> {
-        let mut current = self.url.clone();
-        let mut followed = 0;
-        loop {
-            let mut request = Request::new(method.clone(), current.clone());
-            *request.headers_mut() = headers.clone();
-            if let Some(body) = &body {
-                *request.body_mut() = Some(body.clone().into());
-            }
-            if self.closed.load(Ordering::SeqCst) {
-                return Err(TransportError::Other(
-                    "This operation was aborted".to_owned(),
-                ));
-            }
-            let response = (self.fetch)(request).await.map_err(TransportError::Other)?;
-            let Some(target) = redirect_target(&current, &response) else {
-                return Ok(response);
-            };
-            if followed == MAX_REDIRECTS {
-                return Ok(response);
-            }
-            let keeps_method =
-                method == Method::GET || matches!(response.status().as_u16(), 307 | 308);
-            let keeps_userinfo = (target.username().is_empty() && target.password().is_none())
-                || (target.username() == current.username()
-                    && target.password() == current.password());
-            if !keeps_method || !keeps_userinfo || !is_within_origin(&current, &target) {
-                return Ok(response);
-            }
-            let _ = response.bytes().await;
-            current = target;
-            followed += 1;
-        }
+        fetch_within_origin(&self.fetch, &self.url, method, headers, body, &self.closed).await
     }
 
     fn unauthorized(&self, is_auth_retry: bool) -> TransportError {
