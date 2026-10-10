@@ -12,8 +12,8 @@ use url::Url;
 use crate::device_authorization::DEVICE_CODE_GRANT_TYPE;
 use crate::logging::{debug_log, log};
 use crate::mcp_auth_config::{
-    delete_config_file, read_config_lease, read_json_file, read_text_file, write_json_file,
-    write_text_file,
+    delete_config_file, delete_stale_config_files, read_config_lease, read_json_file,
+    read_text_file, write_json_file, write_text_file,
 };
 use crate::utils::{MCP_REMOTE_VERSION, build_redirect_url};
 
@@ -23,6 +23,8 @@ const URL_SAFE_ANY_PADDING: GeneralPurpose = GeneralPurpose::new(
 );
 
 const CODE_VERIFIER_PREFIX: &str = "code_verifier_";
+
+const ABANDONED_FLOW_AGE: Duration = Duration::from_secs(10 * 60);
 
 const FALLBACK_SCOPE: &str = "openid email profile";
 
@@ -1181,6 +1183,57 @@ impl NodeOAuthClientProvider {
             })
             .and_then(|stored| stored.get("scope")?.as_str().map(str::to_string))
             .unwrap_or_else(|| self.effective_scope())
+    }
+
+    pub fn save_tokens(&mut self, tokens: &Value, now_ms: f64) -> Result<(), String> {
+        self.token_storm_brake.guard_against_token_storm(now_ms)?;
+
+        let expires_in = tokens.get("expires_in").cloned().unwrap_or(Value::Null);
+        let time_left = expires_in
+            .as_f64()
+            .filter(|seconds| *seconds != 0.0)
+            .unwrap_or(0.0);
+
+        if expires_in.as_f64().is_none_or(|seconds| seconds < 0.0) {
+            debug_log(
+                "⚠️ WARNING: Invalid expires_in detected in tokens ⚠️",
+                &[json!({ "expiresIn": expires_in, "tokenObject": tokens.to_string() })],
+            );
+        }
+
+        let is_present = |key: &str| {
+            tokens.get(key).is_some_and(|value| match value {
+                Value::String(text) => !text.is_empty(),
+                Value::Null | Value::Bool(false) => false,
+                _ => true,
+            })
+        };
+        debug_log(
+            "Saving tokens",
+            &[json!({
+                "hasAccessToken": is_present("access_token"),
+                "hasRefreshToken": is_present("refresh_token"),
+                "expiresIn": format!("{time_left} seconds"),
+                "expiresInValue": expires_in,
+            })],
+        );
+
+        let saved = tokens_to_save(tokens, &self.effective_scope(), now_ms);
+        write_json_file(&self.server_url_hash, "tokens.json", &saved)
+            .map_err(|error| error.to_string())?;
+
+        delete_config_file(
+            &self.server_url_hash,
+            &code_verifier_file(self.flow_state()),
+        );
+        delete_stale_config_files(
+            &self.server_url_hash,
+            CODE_VERIFIER_PREFIX,
+            ABANDONED_FLOW_AGE,
+        );
+
+        self.pending_flow = None;
+        Ok(())
     }
 
     pub fn token_endpoint_auth_method(&self) -> &'static str {
