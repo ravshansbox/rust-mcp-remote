@@ -8,7 +8,8 @@ These answer the open questions in the gnhf notes (iterations 144-146). They are
 
 # Working rules
 
-- First task: merge tests/*.rs into one test file per source module (or move them into `#[cfg(test)]` modules in src/). Every file in tests/ builds as its own test binary, and ~140 of them make `cargo test` take ~10 minutes. Keep every existing test.
+- Test layout (done in iteration 147): keep one test binary per source module under tests/<module>/. Do not add new top-level files in tests/.
 - Step size: port one whole function or module per iteration, not the smallest possible piece. The prompt's "smallest possible steps" is superseded by this rule.
 - Validation: each iteration, run clippy (-D warnings), cargo fmt, and only the tests of the modules you touched. Run the full `cargo test` every 5th iteration and whenever you touch shared code.
-- Done means: the rust binary proxies a real MCP server over stdio end-to-end, and all tests pass.
+- Done means: every function in ../mcp-remote/src is ported and wired into main (OAuth sign-in with the browser callback, SSE fallback, coordination, keep-alive, protocol mode `auto`, and client.ts), every TS test file has a Rust counterpart, and the binary signs in to and proxies a real MCP server that requires OAuth.
+- OAuth end-to-end check: the SDK in ~/.npm/_npx/7600f439cbbb35be/node_modules/@modelcontextprotocol/sdk/dist/esm/ has a demo OAuth server (examples/server/demoInMemoryOAuthProvider.js plus server/auth/) to put in front of a streamable HTTP MCP server. Drive the browser step with the authorize URL directly (e.g. curl following redirects to the callback) rather than a real browser.
