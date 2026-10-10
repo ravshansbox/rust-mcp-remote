@@ -49,7 +49,7 @@ fn logs_a_fatal_error_and_exits_with_one_for_an_invalid_url() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("] Fatal error: Invalid URL"));
 }
 
-#[path = "streamable_http/test_server.rs"]
+#[path = "../streamable_http/test_server.rs"]
 #[allow(dead_code)]
 mod test_server;
 
