@@ -228,6 +228,19 @@ async fn filters_ignored_tools_out_of_tools_list_and_blocks_their_calls() {
 }
 
 #[tokio::test]
+async fn forwards_a_tools_call_notification_for_an_ignored_tool_unanswered() {
+    let mut harness = start(ProxyOptions {
+        ignored_tools: vec!["delete*".to_owned()],
+        ..ProxyOptions::default()
+    });
+    let notification =
+        json!({"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "deleteAll"}});
+    from_client(&harness, notification.clone());
+    assert_eq!(next(&mut harness.server.sent).await, notification);
+    nothing_more(&mut harness.client.sent).await;
+}
+
+#[tokio::test]
 async fn a_tools_list_response_whose_request_id_is_a_string_is_not_paired_with_a_numeric_one() {
     let mut harness = start(ProxyOptions {
         ignored_tools: vec!["secret".to_owned()],
