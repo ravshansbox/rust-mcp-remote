@@ -2,7 +2,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use serde_json::{Value, json};
 
-use crate::logging::debug_log;
+use crate::logging::{debug_log, log};
 
 pub const DEVICE_CODE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
 
@@ -16,6 +16,12 @@ const DEFAULT_EXPIRY_SECONDS: f64 = 30.0 * 60.0;
 pub struct FormRequest {
     pub headers: Vec<(String, String)>,
     pub params: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormResponse {
+    pub status: u16,
+    pub body: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -189,6 +195,41 @@ pub fn next_poll_interval(
             ))
         }
     }
+}
+
+pub fn poll_for_tokens(
+    token_endpoint: &str,
+    authorization: &DeviceAuthorizationResponse,
+    request: &FormRequest,
+    mut now_ms: impl FnMut() -> f64,
+    mut sleep: impl FnMut(f64),
+    mut post: impl FnMut(&str, &FormRequest) -> Result<FormResponse, String>,
+) -> Result<Value, String> {
+    let (mut interval_seconds, expires_in) = polling_schedule(authorization);
+    let deadline = now_ms() + expires_in * 1000.0;
+
+    while now_ms() < deadline {
+        sleep(interval_seconds);
+
+        let response = post(token_endpoint, request)?;
+        let body = serde_json::from_str::<Value>(&response.body).ok();
+        if (200..300).contains(&response.status) {
+            log("Authorized.", &[]);
+            return match body {
+                Some(tokens)
+                    if tokens.get("access_token").is_some_and(Value::is_string)
+                        && tokens.get("token_type").is_some_and(Value::is_string) =>
+                {
+                    Ok(tokens)
+                }
+                _ => Err("The token endpoint returned an invalid token response".to_string()),
+            };
+        }
+
+        interval_seconds = next_poll_interval(response.status, body.as_ref(), interval_seconds)?;
+    }
+
+    Err("The device code expired before it was approved".to_string())
 }
 
 pub fn supports_device_authorization(metadata: Option<&Value>) -> bool {
