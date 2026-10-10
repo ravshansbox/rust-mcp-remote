@@ -162,13 +162,12 @@ async fn fetch_protected_resource_metadata_from_url(metadata_url: &str) -> Optio
         );
     };
 
-    let response = crate::streamable_http::redirect_following_client()
+    let request = crate::streamable_http::redirect_following_client()
         .get(metadata_url)
         .header("Accept", "application/json")
         .header("Accept-Encoding", "identity")
-        .timeout(Duration::from_secs(5))
-        .send()
-        .await;
+        .timeout(Duration::from_secs(5));
+    let response = crate::streamable_http::within_headers_timeout(request.send()).await;
     let response = match response {
         Ok(response) => response,
         Err(error) => {

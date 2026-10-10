@@ -1,7 +1,7 @@
 //! client.ts: a command-line MCP client that signs in to a remote server, lists its tools and
 //! resources, and exits.
 
-use rust_mcp_remote::cli::{prepare_sign_in, setup_signal_handlers};
+use rust_mcp_remote::cli::{configure_network, prepare_sign_in, setup_signal_handlers};
 use rust_mcp_remote::client::{Client, attach_client_diagnostics};
 use rust_mcp_remote::connect::{ConnectOptions, RemoteConnection, connect_to_remote_server};
 use rust_mcp_remote::logging::log;
@@ -105,6 +105,7 @@ async fn main() {
         }
     };
     set_cookies_enabled(args.cookies_enabled);
+    configure_network(&args);
     match run_client(args).await {
         Ok(code) => std::process::exit(code),
         Err(error) => {

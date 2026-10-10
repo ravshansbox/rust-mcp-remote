@@ -180,14 +180,14 @@ pub async fn port_held_by_sibling_for(port: u16, server_url_hash: &str) -> bool 
 /// Whether the server answers an unauthenticated GET with a 401 challenge. Unreachable or too
 /// slow to say counts as no, leaving it to the 401 handler.
 pub async fn server_issues_auth_challenge(server_url: &str, headers: &[(String, String)]) -> bool {
-    let mut request = reqwest::Client::new().get(server_url);
+    let mut request = crate::streamable_http::redirect_following_client().get(server_url);
     for (name, value) in headers {
         request = request.header(name.as_str(), value.as_str());
     }
     let request = request
         .header("accept", "application/json, text/event-stream")
         .timeout(Duration::from_millis(5000));
-    match request.send().await {
+    match crate::streamable_http::within_headers_timeout(request.send()).await {
         Ok(response) => {
             let status = response.status().as_u16();
             debug_log(

@@ -1618,9 +1618,8 @@ pub async fn discover_oauth_server_info(
     }
     let probe = probe
         .header("Accept", "application/json, text/event-stream")
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await;
+        .timeout(std::time::Duration::from_secs(10));
+    let probe = crate::streamable_http::within_headers_timeout(probe.send()).await;
     match probe {
         Ok(response) if response.status().is_success() => {
             debug_log(

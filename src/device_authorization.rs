@@ -455,7 +455,9 @@ pub async fn post_form(endpoint: &str, request: &FormRequest) -> Result<FormResp
     for (name, value) in &request.headers {
         builder = builder.header(name, value);
     }
-    let response = builder.send().await.map_err(|error| error.to_string())?;
+    let response = crate::streamable_http::within_headers_timeout(builder.send())
+        .await
+        .map_err(|error| error.to_string())?;
     let status = response.status().as_u16();
     let body = response.text().await.map_err(|error| error.to_string())?;
     Ok(FormResponse { status, body })

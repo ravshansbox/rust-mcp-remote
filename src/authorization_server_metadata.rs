@@ -55,13 +55,12 @@ pub async fn fetch_authorization_server_metadata(server_url: &str) -> Option<Val
 }
 
 async fn fetch_metadata_from(metadata_url: &str) -> Option<Value> {
-    let response = crate::streamable_http::redirect_following_client()
+    let request = crate::streamable_http::redirect_following_client()
         .get(metadata_url)
         .header("Accept", "application/json")
         .header("Accept-Encoding", "identity")
-        .timeout(Duration::from_secs(5))
-        .send()
-        .await;
+        .timeout(Duration::from_secs(5));
+    let response = crate::streamable_http::within_headers_timeout(request.send()).await;
     let response = match response {
         Ok(response) => response,
         Err(error) => {

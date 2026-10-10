@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rust_mcp_remote::cli::{prepare_sign_in, vpn_hint};
+use rust_mcp_remote::cli::{configure_network, prepare_sign_in, vpn_hint};
 use rust_mcp_remote::connect::{
     ConnectOptions, RemoteConnection, connect_to_remote_server, forget_rejected_authorization,
 };
@@ -155,6 +155,7 @@ async fn main() {
         }
     };
     set_cookies_enabled(args.cookies_enabled);
+    configure_network(&args);
     if let Err(error) = run_proxy(args).await {
         log("Fatal error:", &[Value::String(error.clone())]);
         if let Some(hint) = vpn_hint(&error) {
