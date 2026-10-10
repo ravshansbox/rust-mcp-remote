@@ -159,3 +159,42 @@ async fn the_end_of_stdin_shuts_the_client_down() {
     assert!(stderr.contains("Closing connection..."), "{stderr}");
     assert!(!stderr.contains("Exiting OK..."), "{stderr}");
 }
+
+#[tokio::test]
+async fn settles_who_owns_the_sign_in_before_connecting_with_client_credentials() {
+    let (base, _requests) =
+        test_server::serve(Arc::new(|_request| test_server::reply(401, &[], ""))).await;
+    let config_dir = std::env::temp_dir().join(format!(
+        "rust-mcp-remote-client-cli-credentials-{}",
+        std::process::id()
+    ));
+
+    let mut child = command()
+        .env("MCP_REMOTE_CONFIG_DIR", &config_dir)
+        .args([
+            &format!("{base}/mcp"),
+            "--allow-http",
+            "--client-credentials",
+            "--static-oauth-client-info",
+            r#"{"client_id":"client","client_secret":"secret"}"#,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.take();
+    let output = tokio::time::timeout(Duration::from_secs(20), child.wait_with_output())
+        .await
+        .expect("the client did not exit")
+        .unwrap();
+    drop(stdin);
+    let _ = std::fs::remove_dir_all(config_dir);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("Initializing auth coordination on-demand"),
+        "{stderr}"
+    );
+}

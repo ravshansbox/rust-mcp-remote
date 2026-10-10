@@ -17,7 +17,12 @@ const USAGE: &str = "Usage: mcp-remote <https://server-url> [callback-port] [--d
 
 /// `runProxy` from proxy.ts.
 async fn run_proxy(args: CommandLineArgs) -> Result<(), String> {
-    let sign_in = prepare_sign_in(&args, "MCP CLI Proxy").await?;
+    let sign_in = prepare_sign_in(
+        &args,
+        "MCP CLI Proxy",
+        args.use_device_code || args.use_client_credentials,
+    )
+    .await?;
     let auth_provider = Arc::clone(&sign_in.auth_provider);
     let auth_initializer = Arc::clone(&sign_in.auth_initializer);
     let signs_in_without_a_callback_port = sign_in.signs_in_without_a_callback_port;

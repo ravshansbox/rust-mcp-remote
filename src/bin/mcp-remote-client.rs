@@ -20,7 +20,8 @@ fn pretty(value: &Value) -> Value {
 
 /// `runClient` from client.ts. Returns the exit code.
 async fn run_client(args: CommandLineArgs) -> Result<i32, String> {
-    let sign_in = std::sync::Arc::new(prepare_sign_in(&args, "MCP CLI Client").await?);
+    let sign_in =
+        std::sync::Arc::new(prepare_sign_in(&args, "MCP CLI Client", args.use_device_code).await?);
 
     let connected = connect_to_remote_server(
         &sign_in.auth_provider,
