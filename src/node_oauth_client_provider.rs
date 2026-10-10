@@ -996,6 +996,63 @@ impl NodeOAuthClientProvider {
         }
     }
 
+    pub fn client_information(&mut self) -> Option<Value> {
+        debug_log("Reading client info", &[]);
+        if let Some(static_client_info) = &self.static_oauth_client_info {
+            debug_log("Returning static client info", &[]);
+            self.client_info = Some(static_client_info.clone());
+            self.client_registration_source = Some(ClientRegistrationSource::Static);
+            return Some(static_client_info.clone());
+        }
+
+        if let Some(client_id_metadata_document) = self.client_id_metadata_document() {
+            self.client_registration_source =
+                Some(ClientRegistrationSource::ClientIdMetadataDocument);
+            return Some(client_id_metadata_document);
+        }
+
+        let client_info = read_json_file::<Value>(&self.server_url_hash, "client_info.json")
+            .filter(|client_info| client_info.get("client_id").is_some_and(Value::is_string));
+        if let Some(client_info) = &client_info {
+            self.client_info = Some(client_info.clone());
+            if self.client_registration_source != Some(ClientRegistrationSource::FreshDynamic) {
+                self.client_registration_source = Some(ClientRegistrationSource::CachedDynamic);
+            }
+        }
+
+        debug_log(
+            "Client info result:",
+            &[json!(if client_info.is_some() {
+                "Found"
+            } else {
+                "Not found"
+            })],
+        );
+        client_info
+    }
+
+    fn client_id_metadata_document(&self) -> Option<Value> {
+        let client_metadata_url = self.client_metadata_url.as_deref()?;
+        let supported = self
+            .authorization_server_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("client_id_metadata_document_supported"))
+            == Some(&Value::Bool(true));
+        if !supported {
+            debug_log(
+                "Authorization server does not accept a client metadata document; registering instead",
+                &[json!({ "clientMetadataUrl": client_metadata_url })],
+            );
+            return None;
+        }
+
+        debug_log(
+            "Identifying this client by its metadata document",
+            &[json!({ "client_id": client_metadata_url })],
+        );
+        Some(json!({ "client_id": client_metadata_url }))
+    }
+
     pub fn save_client_information(&mut self, client_information: &Value) -> std::io::Result<()> {
         let client_id = client_information.get("client_id").and_then(Value::as_str);
         if self.client_metadata_url.is_some() && client_id == self.client_metadata_url.as_deref() {
