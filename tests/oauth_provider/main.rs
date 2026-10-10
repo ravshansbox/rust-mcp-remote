@@ -1,5 +1,6 @@
 //! Tests for the `oauth_provider` module, gathered into one test binary.
 
+mod explicit_client_credentials;
 mod flow;
 #[allow(dead_code)]
 #[path = "../streamable_http/test_server.rs"]
