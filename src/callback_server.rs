@@ -80,6 +80,10 @@ pub enum CallbackServerError {
     AddrInUse {
         requested_port: u16,
     },
+    /// EACCES: the OS reserves the port rather than anyone holding it
+    PermissionDenied {
+        requested_port: u16,
+    },
     Io(String),
 }
 
@@ -88,6 +92,12 @@ impl std::fmt::Display for CallbackServerError {
         match self {
             Self::AddrInUse { requested_port } => {
                 write!(f, "Callback port {requested_port} is already in use")
+            }
+            Self::PermissionDenied { requested_port } => {
+                write!(
+                    f,
+                    "listen EACCES: permission denied 127.0.0.1:{requested_port}"
+                )
             }
             Self::Io(message) => f.write_str(message),
         }
@@ -120,18 +130,35 @@ struct Shared {
 pub struct OAuthCallbackServer {
     pub actual_port: u16,
     shared: Arc<Shared>,
-    accept_task: tokio::task::JoinHandle<()>,
+    accept_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl Drop for OAuthCallbackServer {
     fn drop(&mut self) {
-        self.accept_task.abort();
+        self.close();
     }
 }
 
 impl OAuthCallbackServer {
     pub fn close(&self) {
-        self.accept_task.abort();
+        let task = self.accept_task.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(task) = task.as_ref() {
+            task.abort();
+        }
+    }
+
+    /// Stops accepting and waits until the listening socket is released, so the port can be
+    /// bound again as soon as this returns (TS `server.close(callback)`).
+    pub async fn shutdown(&self) {
+        let task = self
+            .accept_task
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
+        if let Some(task) = task {
+            task.abort();
+            let _ = task.await;
+        }
     }
 
     /// The TS `authCode` field, which is always null.
@@ -246,6 +273,10 @@ pub async fn setup_oauth_callback_server_with_long_poll(
                 CallbackServerError::AddrInUse {
                     requested_port: options.port,
                 }
+            } else if error.kind() == std::io::ErrorKind::PermissionDenied {
+                CallbackServerError::PermissionDenied {
+                    requested_port: options.port,
+                }
             } else {
                 CallbackServerError::Io(error.to_string())
             }
@@ -285,7 +316,7 @@ pub async fn setup_oauth_callback_server_with_long_poll(
     Ok(OAuthCallbackServer {
         actual_port,
         shared,
-        accept_task,
+        accept_task: Mutex::new(Some(accept_task)),
     })
 }
 
