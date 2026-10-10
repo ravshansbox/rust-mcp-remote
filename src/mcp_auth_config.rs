@@ -189,8 +189,8 @@ pub fn acquire_config_lease(
     server_url_hash: &str,
     filename: &str,
     max_age: Duration,
-) -> Option<String> {
-    ensure_config_dir().ok()?;
+) -> std::io::Result<Option<String>> {
+    ensure_config_dir()?;
     let file_path = config_file_path(server_url_hash, filename);
     let nonce = uuid::Uuid::new_v4().to_string();
 
@@ -200,26 +200,29 @@ pub fn acquire_config_lease(
             .unwrap_or_default()
             .as_millis() as u64;
         let lease = serde_json::json!({ "pid": std::process::id(), "nonce": nonce, "at": at });
-        match write_new_owner_only(&file_path, &serde_json::to_string_pretty(&lease).ok()?) {
+        let Ok(contents) = serde_json::to_string_pretty(&lease) else {
+            return Ok(None);
+        };
+        match write_new_owner_only(&file_path, &contents) {
             Ok(()) => {
-                return read_lease_file(server_url_hash, filename)
+                return Ok(read_lease_file(server_url_hash, filename)
                     .filter(|lease| lease.nonce == nonce)
-                    .map(|_| nonce);
+                    .map(|_| nonce));
             }
             Err(error) => {
                 if error.kind() != std::io::ErrorKind::AlreadyExists || attempt > 0 {
-                    return None;
+                    return Ok(None);
                 }
                 if read_config_lease(server_url_hash, filename, max_age)
                     .is_some_and(|held| held.live)
                 {
-                    return None;
+                    return Ok(None);
                 }
                 let _ = std::fs::remove_file(&file_path);
             }
         }
     }
-    None
+    Ok(None)
 }
 
 fn write_new_owner_only(path: &Path, contents: &str) -> std::io::Result<()> {
