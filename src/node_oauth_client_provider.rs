@@ -12,8 +12,8 @@ use url::Url;
 use crate::device_authorization::DEVICE_CODE_GRANT_TYPE;
 use crate::logging::{debug_log, iso_timestamp, log};
 use crate::mcp_auth_config::{
-    delete_config_file, delete_stale_config_files, read_config_lease, read_json_file,
-    read_text_file, write_json_file, write_text_file,
+    acquire_config_lease, delete_config_file, delete_stale_config_files, read_config_lease,
+    read_json_file, read_text_file, write_json_file, write_text_file,
 };
 use crate::utils::{MCP_REMOTE_VERSION, build_redirect_url};
 
@@ -267,6 +267,7 @@ pub fn is_sibling_token_fresh(expires_at: Option<f64>, now_ms: f64) -> bool {
 pub const REFRESH_LEASE_FILE: &str = "refresh_in_progress.json";
 const REFRESH_LEASE_MS: u64 = 30_000;
 const REFRESH_POLL_MS: u64 = 200;
+pub const UNCOORDINATED: &str = "";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SiblingRefresh {
@@ -1202,6 +1203,23 @@ impl NodeOAuthClientProvider {
             &mut self.warned_about_missing_id_token,
             tokens,
         )
+    }
+
+    pub fn take_refresh_lease(&self) -> Option<String> {
+        match acquire_config_lease(
+            &self.server_url_hash,
+            REFRESH_LEASE_FILE,
+            Duration::from_millis(REFRESH_LEASE_MS),
+        ) {
+            Ok(lease) => lease,
+            Err(error) => {
+                debug_log(
+                    "Could not take the refresh lease; refreshing without coordinating",
+                    &[json!(error.to_string())],
+                );
+                Some(UNCOORDINATED.to_string())
+            }
+        }
     }
 
     pub fn read_stored_tokens(&mut self, now_ms: f64) -> Option<StoredTokens> {
