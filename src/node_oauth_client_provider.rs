@@ -1173,6 +1173,16 @@ impl NodeOAuthClientProvider {
         effective_scope(&self.scope_sources(), self.has_explicit_token_endpoint())
     }
 
+    pub fn scope_to_repeat_on_refresh(&self) -> String {
+        read_json_file::<Value>(&self.server_url_hash, "tokens.json")
+            .filter(|stored| {
+                stored.get("access_token").is_some_and(Value::is_string)
+                    && stored.get("token_type").is_some_and(Value::is_string)
+            })
+            .and_then(|stored| stored.get("scope")?.as_str().map(str::to_string))
+            .unwrap_or_else(|| self.effective_scope())
+    }
+
     pub fn token_endpoint_auth_method(&self) -> &'static str {
         token_endpoint_auth_method(self.authorization_server_metadata.as_ref())
     }
