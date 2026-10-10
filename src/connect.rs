@@ -1,8 +1,6 @@
 //! `connectToRemoteServer` from utils.ts: opens the remote transport, probes it with a throwaway
-//! client, and answers what the probe runs into - a sign-in, a token refused straight after it
+//! client (or connects the caller's client over it), and answers what the probe runs into - a sign-in, a token refused straight after it
 //! was issued, or a server that speaks the other transport.
-//!
-//! Not yet ported: the with-client mode client.ts uses.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -16,6 +14,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::auth::OAuthClientProvider;
 use crate::callback_server::AuthCodeResult;
+use crate::client::{Client, ClientTransport};
 use crate::logging::{debug_log, log};
 use crate::node_oauth_client_provider::CredentialScope;
 use crate::oauth_provider::OAuthProvider;
@@ -429,6 +428,56 @@ fn http_transport(
     )
 }
 
+/// The name and version a with-client connection's `Client` introduces itself with.
+#[derive(Clone, Copy)]
+struct ClientIdentity<'a> {
+    name: &'a str,
+    version: &'a str,
+}
+
+/// `client.connect(transport)`: the handshake on the main transport. A send that fails fails
+/// the handshake with the transport's own error, so a 401 reads as one.
+async fn connect_client(
+    transport: &RemoteTransport,
+    events: UnboundedReceiver<TransportEvent>,
+    identity: ClientIdentity<'_>,
+) -> Result<Client, TransportError> {
+    let failed_send: Arc<std::sync::Mutex<Option<TransportError>>> = Arc::default();
+    let sender = transport.clone();
+    let closer = transport.clone();
+    let versioned = transport.clone();
+    let recorded = Arc::clone(&failed_send);
+    let client_transport = ClientTransport {
+        send: Arc::new(move |message| {
+            let sender = sender.clone();
+            let recorded = Arc::clone(&recorded);
+            Box::pin(async move {
+                sender.send(&message).await.map_err(|error| {
+                    let message = error.to_string();
+                    *recorded.lock().unwrap_or_else(|p| p.into_inner()) = Some(error);
+                    message
+                })
+            })
+        }),
+        close: Arc::new(move || closer.close()),
+        set_protocol_version: Arc::new(move |version| versioned.set_protocol_version(version)),
+    };
+    Client::connect(identity.name, identity.version, client_transport, events)
+        .await
+        .map_err(|error| {
+            failed_send
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .take()
+                .unwrap_or_else(|| TransportError::Other(error.to_string()))
+        })
+}
+
+/// A receiver whose sender is gone, for a connection whose events a client has taken.
+fn no_events() -> UnboundedReceiver<TransportEvent> {
+    tokio::sync::mpsc::unbounded_channel().1
+}
+
 /// One connection attempt. A failure carries the transport that received the challenge, so the
 /// code can be redeemed on the transport that stored its resource_metadata URL.
 async fn attempt(
@@ -437,7 +486,8 @@ async fn attempt(
     headers: &[(String, String)],
     strategy: TransportStrategy,
     protocol_mode: ProtocolMode,
-) -> Result<RemoteConnection, (TransportError, Option<RemoteTransport>)> {
+    client: Option<ClientIdentity<'_>>,
+) -> Result<(RemoteConnection, Option<Client>), (TransportError, Option<RemoteTransport>)> {
     let sse_transport = matches!(
         strategy,
         TransportStrategy::SseOnly | TransportStrategy::SseFirst
@@ -447,7 +497,7 @@ async fn attempt(
         &[json!({"sseTransport": sse_transport})],
     );
     let on_stream_reconnect: StreamReconnectHook = Arc::default();
-    if sse_transport {
+    let (transport, events) = if sse_transport {
         let (transport, events) = SseClientTransport::new(
             url.clone(),
             SseClientOptions {
@@ -458,48 +508,74 @@ async fn attempt(
                 ..SseClientOptions::default()
             },
         );
-        debug_log("Starting transport directly", &[]);
+        debug_log(
+            if client.is_some() {
+                "Connecting client to transport"
+            } else {
+                "Starting transport directly"
+            },
+            &[],
+        );
         // The SSE transport signs in from start(), so it is the one a 401 lands on. Closing it
         // stops the EventSource reconnecting; finish_auth needs no stream.
         if let Err(error) = transport.start().await {
             transport.close();
             return Err((error, Some(RemoteTransport::Sse(transport))));
         }
-        log("Connected to remote server using SSEClientTransport", &[]);
-        return Ok(RemoteConnection {
-            transport: RemoteTransport::Sse(transport),
-            events,
-            on_stream_reconnect,
-        });
-    }
-
-    let (transport, events) = http_transport(url, auth, headers);
-    debug_log("Starting transport directly", &[]);
-    transport.start().map_err(|error| (error, None))?;
-
-    // transport.start() sends nothing, so a one-off client makes the first request and finds
-    // out whether an HTTP server is there at all. Its transport is the one a 401 lands on.
-    debug_log("Creating test transport for HTTP-only connection test", &[]);
-    let (probe, mut probe_events) = http_transport(url, auth, headers);
-    let probed = match probe.start() {
-        Ok(()) => probe_initialize(&probe, &mut probe_events, protocol_mode).await,
-        Err(error) => Err(error),
+        (RemoteTransport::Sse(transport), events)
+    } else {
+        let (transport, events) = http_transport(url, auth, headers);
+        debug_log(
+            if client.is_some() {
+                "Connecting client to transport"
+            } else {
+                "Starting transport directly"
+            },
+            &[],
+        );
+        transport.start().map_err(|error| (error, None))?;
+        if client.is_none() {
+            // transport.start() sends nothing, so a one-off client makes the first request and
+            // finds out whether an HTTP server is there at all. Its transport is the one a 401
+            // lands on.
+            debug_log("Creating test transport for HTTP-only connection test", &[]);
+            let (probe, mut probe_events) = http_transport(url, auth, headers);
+            let probed = match probe.start() {
+                Ok(()) => probe_initialize(&probe, &mut probe_events, protocol_mode).await,
+                Err(error) => Err(error),
+            };
+            if let Err(error) = probed {
+                transport.close();
+                return Err((error, Some(RemoteTransport::Http(probe))));
+            }
+            probe.close();
+        }
+        (RemoteTransport::Http(transport), events)
     };
-    if let Err(error) = probed {
-        transport.close();
-        return Err((error, Some(RemoteTransport::Http(probe))));
-    }
-    probe.close();
 
+    let (events, client) = match client {
+        // The client's own handshake goes out on the main transport, so a 401 lands there.
+        Some(identity) => match connect_client(&transport, events, identity).await {
+            Ok(client) => (no_events(), Some(client)),
+            Err(error) => {
+                transport.close();
+                return Err((error, Some(transport)));
+            }
+        },
+        None => (events, None),
+    };
     log(
-        "Connected to remote server using StreamableHTTPClientTransport",
+        &format!("Connected to remote server using {}", transport.name()),
         &[],
     );
-    Ok(RemoteConnection {
-        transport: RemoteTransport::Http(transport),
-        events,
-        on_stream_reconnect,
-    })
+    Ok((
+        RemoteConnection {
+            transport,
+            events,
+            on_stream_reconnect,
+        },
+        client,
+    ))
 }
 
 /// Creates and connects the remote transport, signing in when the server asks for it.
@@ -508,6 +584,35 @@ pub async fn connect_to_remote_server(
     auth_initializer: &AuthInitializer,
     options: &ConnectOptions,
 ) -> Result<RemoteConnection, TransportError> {
+    connect(auth, auth_initializer, options, None)
+        .await
+        .map(|(connection, _)| connection)
+}
+
+/// `connectToRemoteServer` with a client: connects a `Client` named `client_name` over the
+/// remote transport, signing in when the server asks for it, and returns both.
+pub async fn connect_client_to_remote_server(
+    auth: &dyn RemoteAuth,
+    auth_initializer: &AuthInitializer,
+    options: &ConnectOptions,
+    client_name: &str,
+    client_version: &str,
+) -> Result<(Client, RemoteTransport), TransportError> {
+    let identity = ClientIdentity {
+        name: client_name,
+        version: client_version,
+    };
+    let (connection, client) = connect(auth, auth_initializer, options, Some(identity)).await?;
+    let client = client.expect("a with-client connection connects its client");
+    Ok((client, connection.transport))
+}
+
+async fn connect(
+    auth: &dyn RemoteAuth,
+    auth_initializer: &AuthInitializer,
+    options: &ConnectOptions,
+    client: Option<ClientIdentity<'_>>,
+) -> Result<(RemoteConnection, Option<Client>), TransportError> {
     let mut reasons: HashSet<&'static str> = HashSet::new();
     let mut strategy = options.transport_strategy;
     loop {
@@ -536,6 +641,7 @@ pub async fn connect_to_remote_server(
             &options.headers,
             strategy,
             options.protocol_mode,
+            client,
         )
         .await
         {

@@ -1,5 +1,5 @@
 //! The connect-to-remote-server.test.ts scenarios, against a real HTTP server rather than mocked
-//! SDK classes. The with-client mode test is left out: that mode is not ported yet.
+//! SDK classes.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -8,7 +8,8 @@ use std::time::Duration;
 use rust_mcp_remote::auth::{AuthError, AuthOptions, AuthResult};
 use rust_mcp_remote::callback_server::AuthCodeResult;
 use rust_mcp_remote::connect::{
-    AuthInitialization, AuthInitializer, ConnectOptions, RemoteAuth, connect_to_remote_server,
+    AuthInitialization, AuthInitializer, ConnectOptions, RemoteAuth,
+    connect_client_to_remote_server, connect_to_remote_server,
 };
 use rust_mcp_remote::protocol_era::ProtocolMode;
 use rust_mcp_remote::streamable_http::{BoxFuture, TransportOAuth};
@@ -570,4 +571,68 @@ async fn in_auto_mode_a_probe_the_server_fails_with_a_5xx_is_an_error() {
         Err("Version negotiation failed: the server answered the probe with HTTP 503".to_owned())
     );
     assert_eq!(methods.len(), 1);
+}
+
+#[tokio::test]
+async fn in_with_client_mode_the_client_handshakes_on_the_main_transport_and_auth_completes_on_it()
+{
+    let base = Arc::new(OnceLock::<String>::new());
+    let handler_base = Arc::clone(&base);
+    let (url, mut requests) = serve(Arc::new(move |request: &RecordedRequest| {
+        if request.header("authorization") != Some("Bearer at-1") {
+            let header = format!(
+                r#"Bearer resource_metadata="{}/.well-known/oauth-protected-resource/mcp""#,
+                handler_base.get().unwrap()
+            );
+            return reply(401, &[("www-authenticate", header.as_str())], "no");
+        }
+        let body: Value = serde_json::from_str(&request.body).unwrap_or(Value::Null);
+        if body["method"] == "initialize" {
+            let answer = json!({"jsonrpc": "2.0", "id": body["id"], "result": {
+                "protocolVersion": "2025-06-18", "capabilities": {},
+                "serverInfo": {"name": "fake", "version": "1"}}});
+            return reply(
+                200,
+                &[("content-type", "application/json")],
+                &answer.to_string(),
+            );
+        }
+        reply(202, &[], "")
+    }))
+    .await;
+    base.set(url.clone()).unwrap();
+    let auth = FakeAuth::new(false);
+
+    let (client, transport) = connect_client_to_remote_server(
+        &Remote(Arc::clone(&auth)),
+        &owner_of("auth-code-456", None),
+        &options(&url),
+        "mcp-remote",
+        "9.9.9",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        client.server_version(),
+        Some(json!({"name": "fake", "version": "1"}))
+    );
+    assert_eq!(
+        auth.code_calls(),
+        vec![AuthCall {
+            authorization_code: Some("auth-code-456".to_owned()),
+            iss: None,
+            resource_metadata_url: Some(format!("{url}/.well-known/oauth-protected-resource/mcp")),
+        }]
+    );
+    let mut client_names = Vec::new();
+    while let Ok(request) = requests.try_recv() {
+        let body: Value = serde_json::from_str(&request.body).unwrap_or(Value::Null);
+        if body["method"] == "initialize" {
+            client_names.push(body["params"]["clientInfo"]["name"].clone());
+        }
+    }
+    assert_eq!(client_names, [json!("mcp-remote"), json!("mcp-remote")]);
+    client.close();
+    transport.close();
 }
