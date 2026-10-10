@@ -174,3 +174,51 @@ async fn clears_the_hook_when_the_proxy_ends() {
         .unwrap();
     assert!(slot.lock().unwrap().is_none());
 }
+
+#[tokio::test]
+async fn a_request_retried_after_a_sign_in_waits_for_a_session_the_sign_in_dropped() {
+    let slot: StreamReconnectHook = Arc::default();
+    type Endpoint = Arc<Mutex<Option<String>>>;
+    let endpoint: Arc<Mutex<Option<Endpoint>>> = Arc::default();
+    let reauthorize: AuthHook = {
+        let slot = Arc::clone(&slot);
+        let endpoint = Arc::clone(&endpoint);
+        Arc::new(move || {
+            let hook = slot.lock().unwrap().clone().expect("the proxy set no hook");
+            let endpoint = endpoint.lock().unwrap().clone().unwrap();
+            Box::pin(async move {
+                hook();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    *endpoint.lock().unwrap() = Some(NEW_ENDPOINT.to_owned());
+                });
+                Ok(())
+            })
+        })
+    };
+    let mut harness = start(ProxyOptions {
+        stream_reconnect: Some(Arc::clone(&slot)),
+        reauthorize: Some(reauthorize),
+        ..ProxyOptions::default()
+    });
+    *harness.server.transport.endpoint.lock().unwrap() = Some(OLD_ENDPOINT.to_owned());
+    *endpoint.lock().unwrap() = Some(Arc::clone(&harness.server.transport.endpoint));
+    initialized(&mut harness).await;
+
+    harness
+        .server
+        .transport
+        .fail_next
+        .lock()
+        .unwrap()
+        .push_back(unauthorized());
+    from_client(
+        &harness,
+        json!({"jsonrpc": "2.0", "id": 7, "method": "tools/list"}),
+    );
+
+    expect_handshake(&mut harness).await;
+    let retried = next(&mut harness.server.sent).await;
+    assert_eq!(retried["id"], 7);
+    assert_eq!(retried["sentTo"], NEW_ENDPOINT);
+}
