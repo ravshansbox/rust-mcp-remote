@@ -4,5 +4,9 @@
 pub static GLOBAL_STATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 mod build_urls;
+mod discover;
 mod get_authorization_server_url;
 mod parse_www_authenticate_header;
+#[allow(dead_code)]
+#[path = "../streamable_http/test_server.rs"]
+mod test_server;
