@@ -800,6 +800,8 @@ pub enum CredentialScope {
     Verifier,
 }
 
+pub type InFlight<T> = Mutex<Option<Arc<OnceLock<T>>>>;
+
 pub struct NodeOAuthClientProvider {
     pub options: OAuthProviderOptions,
     pub server_url_hash: String,
@@ -830,6 +832,7 @@ pub struct NodeOAuthClientProvider {
     pub client_registration_source: Option<ClientRegistrationSource>,
     pub warned_about_missing_id_token: bool,
     pub refresh_in_flight: Mutex<Option<Arc<OnceLock<Option<Value>>>>>,
+    pub client_credentials_in_flight: InFlight<Result<(), String>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -888,6 +891,7 @@ impl NodeOAuthClientProvider {
             client_registration_source: None,
             warned_about_missing_id_token: false,
             refresh_in_flight: Mutex::new(None),
+            client_credentials_in_flight: Mutex::new(None),
             options,
         })
     }
@@ -1253,6 +1257,39 @@ impl NodeOAuthClientProvider {
         let _ = attempt.set(result.clone());
         *self
             .refresh_in_flight
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        result
+    }
+
+    pub fn renew_client_credentials(
+        &self,
+        scope: Option<&str>,
+        auth: impl FnOnce(&str, Option<&str>) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let (attempt, is_leader) = {
+            let mut in_flight = self
+                .client_credentials_in_flight
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            match in_flight.as_ref() {
+                Some(attempt) => (attempt.clone(), false),
+                None => {
+                    let attempt = Arc::new(OnceLock::new());
+                    *in_flight = Some(attempt.clone());
+                    (attempt, true)
+                }
+            }
+        };
+
+        if !is_leader {
+            return attempt.wait().clone();
+        }
+
+        let result = auth(self.resource_server_url(), scope);
+        let _ = attempt.set(result.clone());
+        *self
+            .client_credentials_in_flight
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
         result
