@@ -1470,3 +1470,145 @@ impl MessageTransformer {
         self.pending_requests.remove(&key);
     }
 }
+
+/// What `discover_oauth_server_info` found out about where to sign in.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct OAuthServerDiscoveryResult {
+    pub authorization_server_url: String,
+    pub authorization_server_metadata: Option<serde_json::Value>,
+    pub protected_resource_metadata: Option<serde_json::Value>,
+    pub www_authenticate_scope: Option<String>,
+}
+
+/// `discoverOAuthServerInfo`: probes the MCP server for its WWW-Authenticate challenge, follows
+/// RFC 9728 protected resource metadata to the authorization server, and fetches that server's
+/// metadata. An explicit token endpoint skips every probe. Fails only on an unparseable
+/// `token_endpoint`.
+pub async fn discover_oauth_server_info(
+    server_url: &str,
+    headers: &[(String, String)],
+    token_endpoint: Option<&str>,
+) -> Result<OAuthServerDiscoveryResult, String> {
+    use crate::authorization_server_metadata::fetch_authorization_server_metadata;
+    use crate::logging::debug_log;
+    use crate::protected_resource_metadata::{
+        authorization_server_url_of, discover_protected_resource_metadata,
+        parse_www_authenticate_header,
+    };
+    use serde_json::json;
+
+    if let Some(token_endpoint) = token_endpoint.filter(|endpoint| !endpoint.is_empty()) {
+        let endpoint = url::Url::parse(token_endpoint).map_err(|error| error.to_string())?;
+        let origin = endpoint.origin().ascii_serialization();
+        debug_log(
+            "Using the explicitly configured token endpoint; skipping OAuth discovery",
+            &[json!({ "tokenEndpointOrigin": origin })],
+        );
+        return Ok(OAuthServerDiscoveryResult {
+            authorization_server_metadata: Some(json!({
+                "issuer": origin,
+                "token_endpoint": endpoint.to_string(),
+            })),
+            authorization_server_url: origin,
+            ..OAuthServerDiscoveryResult::default()
+        });
+    }
+
+    debug_log(
+        "Starting OAuth server discovery",
+        &[json!({ "serverUrl": server_url })],
+    );
+
+    let mut www_authenticate_header = None;
+    let mut www_authenticate_scope = None;
+
+    debug_log("Probing MCP server for WWW-Authenticate header", &[]);
+    let mut probe = crate::streamable_http::redirect_following_client().get(server_url);
+    for (name, value) in headers {
+        // The spread in TS lets the probe's own Accept replace one the user passed
+        if !name.eq_ignore_ascii_case("accept") {
+            probe = probe.header(name.as_str(), value.as_str());
+        }
+    }
+    let probe = probe
+        .header("Accept", "application/json, text/event-stream")
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await;
+    match probe {
+        Ok(response) if response.status().is_success() => {
+            debug_log(
+                "Server responded OK without auth, using server URL as authorization server",
+                &[],
+            );
+            return Ok(OAuthServerDiscoveryResult {
+                authorization_server_url: server_url.to_string(),
+                authorization_server_metadata: fetch_authorization_server_metadata(server_url)
+                    .await,
+                ..OAuthServerDiscoveryResult::default()
+            });
+        }
+        Ok(response) if response.status().as_u16() == 401 => {
+            let header = response
+                .headers()
+                .get("www-authenticate")
+                .and_then(|value| value.to_str().ok())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            debug_log(
+                "Received 401 with WWW-Authenticate header",
+                &[json!({ "hasHeader": header.is_some(), "header": header })],
+            );
+            if let Some(header) = &header {
+                www_authenticate_scope = parse_www_authenticate_header(header).scope;
+            }
+            www_authenticate_header = header;
+        }
+        Ok(_) => {}
+        Err(error) => {
+            debug_log(
+                "Error probing MCP server",
+                &[json!({ "error": error.to_string() })],
+            );
+        }
+    }
+
+    let protected_resource_metadata =
+        discover_protected_resource_metadata(server_url, www_authenticate_header.as_deref()).await;
+
+    let authorization_server_url = match &protected_resource_metadata {
+        Some(metadata) => match authorization_server_url_of(metadata) {
+            Some(discovered) => {
+                debug_log(
+                    "Using authorization server from Protected Resource Metadata",
+                    &[json!({ "authorizationServerUrl": discovered })],
+                );
+                discovered.to_string()
+            }
+            None => {
+                debug_log(
+                    "PRM found but no authorization_servers, falling back to server URL",
+                    &[],
+                );
+                server_url.to_string()
+            }
+        },
+        None => {
+            debug_log(
+                "No Protected Resource Metadata found, falling back to server URL as authorization server",
+                &[],
+            );
+            server_url.to_string()
+        }
+    };
+
+    let authorization_server_metadata =
+        fetch_authorization_server_metadata(&authorization_server_url).await;
+
+    Ok(OAuthServerDiscoveryResult {
+        authorization_server_url,
+        authorization_server_metadata,
+        protected_resource_metadata,
+        www_authenticate_scope,
+    })
+}

@@ -1,4 +1,9 @@
+use std::time::Duration;
+
+use serde_json::{Value, json};
 use url::{ParseError, Url};
+
+use crate::logging::debug_log;
 
 const PROTECTED_RESOURCE_PATH: &str = "/.well-known/oauth-protected-resource";
 
@@ -122,4 +127,141 @@ pub fn get_authorization_server_url(metadata: &ProtectedResourceMetadata) -> Opt
         .as_ref()?
         .first()
         .map(String::as_str)
+}
+
+/// `getAuthorizationServerUrl` for metadata held as raw JSON, the way discovery returns it.
+pub fn authorization_server_url_of(metadata: &Value) -> Option<&str> {
+    metadata
+        .get("authorization_servers")?
+        .as_array()?
+        .first()?
+        .as_str()
+}
+
+/// JavaScript truthiness, which decides whether a fetched document counts as found.
+fn is_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(flag) => *flag,
+        Value::Number(number) => number.as_f64().is_some_and(|n| n != 0.0),
+        Value::String(text) => !text.is_empty(),
+        Value::Array(_) | Value::Object(_) => true,
+    }
+}
+
+async fn fetch_protected_resource_metadata_from_url(metadata_url: &str) -> Option<Value> {
+    debug_log(
+        "Fetching Protected Resource Metadata",
+        &[json!({ "metadataUrl": metadata_url })],
+    );
+
+    let report_error = |error: String| {
+        debug_log(
+            "Error fetching Protected Resource Metadata",
+            &[json!({ "error": error, "metadataUrl": metadata_url })],
+        );
+    };
+
+    let response = crate::streamable_http::redirect_following_client()
+        .get(metadata_url)
+        .header("Accept", "application/json")
+        .header("Accept-Encoding", "identity")
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await;
+    let response = match response {
+        Ok(response) => response,
+        Err(error) => {
+            report_error(error.to_string());
+            return None;
+        }
+    };
+
+    let status = response.status();
+    if !status.is_success() {
+        if status.as_u16() == 404 {
+            debug_log(
+                "Protected Resource Metadata not found (404)",
+                &[json!({ "metadataUrl": metadata_url })],
+            );
+        } else {
+            debug_log(
+                "Failed to fetch Protected Resource Metadata",
+                &[json!({
+                    "status": status.as_u16(),
+                    "statusText": status.canonical_reason().unwrap_or_default(),
+                })],
+            );
+        }
+        return None;
+    }
+
+    let metadata = match response.json::<Value>().await {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            report_error(error.to_string());
+            return None;
+        }
+    };
+    // `metadata.resource` on a JSON null throws in TS, which lands in the same catch
+    if metadata.is_null() {
+        report_error("Cannot read properties of null (reading 'resource')".to_string());
+        return None;
+    }
+
+    debug_log(
+        "Successfully fetched Protected Resource Metadata",
+        &[json!({
+            "resource": metadata.get("resource"),
+            "authorizationServers": metadata.get("authorization_servers"),
+            "scopesSupported": metadata.get("scopes_supported"),
+        })],
+    );
+    is_truthy(&metadata).then_some(metadata)
+}
+
+/// Finds the RFC 9728 metadata for `resource_url`: the `resource_metadata` URL from a
+/// WWW-Authenticate challenge first, then the path-specific and root well-known URLs.
+pub async fn discover_protected_resource_metadata(
+    resource_url: &str,
+    www_authenticate_header: Option<&str>,
+) -> Option<Value> {
+    debug_log(
+        "Starting Protected Resource Metadata discovery",
+        &[json!({
+            "resourceUrl": resource_url,
+            "hasWWWAuthenticateHeader": www_authenticate_header.is_some_and(|h| !h.is_empty()),
+        })],
+    );
+
+    if let Some(header) = www_authenticate_header.filter(|header| !header.is_empty()) {
+        let params = parse_www_authenticate_header(header);
+        if let Some(url) = params.resource_metadata_url.filter(|url| !url.is_empty()) {
+            debug_log(
+                "Using resource_metadata URL from WWW-Authenticate header",
+                &[json!({ "url": url })],
+            );
+            if let Some(metadata) = fetch_protected_resource_metadata_from_url(&url).await {
+                return Some(metadata);
+            }
+            debug_log(
+                "Failed to fetch from WWW-Authenticate URL, falling back to well-known discovery",
+                &[],
+            );
+        }
+    }
+
+    // An unparseable resource URL makes TS's `new URL` throw; here it is simply nothing found
+    let well_known_urls = build_protected_resource_metadata_urls(resource_url).ok()?;
+    for url in &well_known_urls {
+        if let Some(metadata) = fetch_protected_resource_metadata_from_url(url).await {
+            return Some(metadata);
+        }
+    }
+
+    debug_log(
+        "Protected Resource Metadata discovery failed - no metadata found",
+        &[],
+    );
+    None
 }

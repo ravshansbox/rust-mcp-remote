@@ -5,6 +5,7 @@ pub static GLOBAL_STATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 mod build_redirect_url;
 mod calculate_default_port;
+mod discover_oauth_server_info;
 mod early_exit_output;
 mod encode_mcp_header_value;
 mod env_vars;
@@ -41,5 +42,8 @@ mod parse_transport_strategy;
 mod read_header_file;
 mod select_callback_port;
 mod should_include_tool;
+#[allow(dead_code)]
+#[path = "../streamable_http/test_server.rs"]
+mod test_server;
 mod transform_proxy_response;
 mod validate_server_url;
