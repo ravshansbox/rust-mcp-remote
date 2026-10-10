@@ -255,6 +255,47 @@ pub fn supports_device_authorization(metadata: Option<&Value>) -> bool {
     }
 }
 
+pub fn select_client_auth_method(
+    client_information: &Value,
+    supported_methods: &[&str],
+) -> &'static str {
+    let has_client_secret = client_information.get("client_secret").is_some();
+    let registered = client_information
+        .get("token_endpoint_auth_method")
+        .and_then(Value::as_str)
+        .and_then(|method| {
+            ["client_secret_basic", "client_secret_post", "none"]
+                .into_iter()
+                .find(|known| *known == method)
+        });
+    if let Some(method) = registered
+        && (supported_methods.is_empty() || supported_methods.contains(&method))
+    {
+        return method;
+    }
+    if supported_methods.is_empty() {
+        return if has_client_secret {
+            "client_secret_basic"
+        } else {
+            "none"
+        };
+    }
+    if has_client_secret && supported_methods.contains(&"client_secret_basic") {
+        return "client_secret_basic";
+    }
+    if has_client_secret && supported_methods.contains(&"client_secret_post") {
+        return "client_secret_post";
+    }
+    if supported_methods.contains(&"none") {
+        return "none";
+    }
+    if has_client_secret {
+        "client_secret_post"
+    } else {
+        "none"
+    }
+}
+
 pub fn apply_client_authentication(
     method: &str,
     client_id: &str,
