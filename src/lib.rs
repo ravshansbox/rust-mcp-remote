@@ -9,5 +9,7 @@ pub mod node_oauth_client_provider;
 pub mod open_browser;
 pub mod protected_resource_metadata;
 pub mod protocol_era;
+pub mod sse;
 pub mod stdio;
+pub mod streamable_http;
 pub mod utils;
