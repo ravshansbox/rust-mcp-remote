@@ -728,6 +728,22 @@ impl ResourceSelection {
     }
 }
 
+fn resource_allowed(requested_resource: &Url, configured_resource: &Url) -> bool {
+    if requested_resource.origin() != configured_resource.origin() {
+        return false;
+    }
+    let with_trailing_slash = |path: &str| {
+        if path.ends_with('/') {
+            path.to_string()
+        } else {
+            format!("{path}/")
+        }
+    };
+    requested_resource.path().len() >= configured_resource.path().len()
+        && with_trailing_slash(requested_resource.path())
+            .starts_with(&with_trailing_slash(configured_resource.path()))
+}
+
 pub fn resource_selection(
     skip_resource_parameter: bool,
     authorize_resource: Option<&str>,
@@ -1175,6 +1191,31 @@ impl NodeOAuthClientProvider {
             self.options.resource_server_url.as_deref(),
             &self.options.server_url,
         )
+    }
+
+    pub fn device_authorization_resource(&self) -> Result<Option<Url>, String> {
+        let server_url = self.resource_server_url();
+        let mut default_resource = Url::parse(server_url)
+            .map_err(|error| format!("Invalid URL: {server_url}: {error}"))?;
+        default_resource.set_fragment(None);
+        if self.resource_selection != ResourceSelection::SdkDefault {
+            return Ok(self.resource_selection.validate_resource_url());
+        }
+        let Some(protected_resource_metadata) = &self.protected_resource_metadata else {
+            return Ok(None);
+        };
+        let resource = protected_resource_metadata
+            .get("resource")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let configured_resource =
+            Url::parse(resource).map_err(|error| format!("Invalid URL: {resource}: {error}"))?;
+        if !resource_allowed(&default_resource, &configured_resource) {
+            return Err(format!(
+                "Protected resource {resource} does not match expected {default_resource} (or origin)"
+            ));
+        }
+        Ok(Some(configured_resource))
     }
 
     pub fn scope_sources(&self) -> ScopeSources<'_> {
