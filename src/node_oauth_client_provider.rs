@@ -1286,6 +1286,56 @@ impl NodeOAuthClientProvider {
         result
     }
 
+    pub fn tokens(
+        &mut self,
+        now_ms: f64,
+        renew_client_credentials: impl FnOnce(Option<&str>) -> Result<(), String>,
+        do_refresh_tokens: impl FnOnce(&str) -> Option<Value>,
+    ) -> Option<Value> {
+        let StoredTokens { tokens, is_expired } = self.read_stored_tokens(now_ms)?;
+
+        if is_expired && self.has_explicit_token_endpoint() {
+            let scope = tokens
+                .get("requested_scope")
+                .and_then(Value::as_str)
+                .or_else(|| tokens.get("scope").and_then(Value::as_str));
+            return match renew_client_credentials(scope) {
+                Ok(()) => {
+                    let renewed = self.stored_tokens();
+                    self.as_bearer_tokens(renewed)
+                }
+                Err(error) => {
+                    debug_log(
+                        "Proactive client_credentials renewal failed",
+                        &[json!(error)],
+                    );
+                    log(
+                        "Proactive token renewal failed, falling back to the stored token",
+                        &[],
+                    );
+                    self.as_bearer_tokens(Some(tokens))
+                }
+            };
+        }
+
+        if is_expired
+            && let Some(refresh_token) = tokens
+                .get("refresh_token")
+                .and_then(Value::as_str)
+                .filter(|refresh_token| !refresh_token.is_empty())
+        {
+            if let Some(refreshed) = self.refresh_tokens(refresh_token, do_refresh_tokens) {
+                return self.as_bearer_tokens(Some(refreshed));
+            }
+            log(
+                "Proactive token refresh failed, falling back to the stored token",
+                &[],
+            );
+        }
+
+        self.as_bearer_tokens(Some(tokens))
+    }
+
     pub fn read_stored_tokens(&mut self, now_ms: f64) -> Option<StoredTokens> {
         debug_log("Reading OAuth tokens", &[]);
 
