@@ -336,6 +336,36 @@ async fn holds_later_messages_until_notifications_initialized_is_delivered() {
 }
 
 #[tokio::test]
+async fn a_lapsed_barrier_holds_nothing_after_it() {
+    let mut harness = start(ProxyOptions {
+        lifecycle_barrier_timeout: Duration::from_millis(200),
+        ..ProxyOptions::default()
+    });
+    *harness.server.transport.send_delay.lock().unwrap() = Some(Duration::from_secs(10));
+    from_client(
+        &harness,
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    );
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    *harness.server.transport.send_delay.lock().unwrap() = None;
+    for id in 1..=3 {
+        from_client(
+            &harness,
+            json!({"jsonrpc": "2.0", "id": id, "method": "tools/list"}),
+        );
+    }
+
+    let all_three = async {
+        for id in 1..=3 {
+            assert_eq!(next(&mut harness.server.sent).await["id"], id);
+        }
+    };
+    tokio::time::timeout(Duration::from_millis(450), all_three)
+        .await
+        .expect("each message waited out the barrier again");
+}
+
+#[tokio::test]
 async fn fails_an_initialize_the_server_accepted_but_never_answered() {
     let mut harness = start(ProxyOptions {
         initialize_timeout: Duration::from_millis(100),

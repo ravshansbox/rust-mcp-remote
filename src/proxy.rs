@@ -1738,7 +1738,8 @@ async fn forward_in_order<C: ProxyTransport, S: ProxyTransport>(
     shared: Arc<Shared<C, S>>,
     mut messages: mpsc::UnboundedReceiver<Forward>,
 ) {
-    let mut initialized_delivered: Option<tokio::task::JoinHandle<()>> = None;
+    let mut initialized_delivered: Option<(tokio::task::JoinHandle<()>, tokio::time::Instant)> =
+        None;
     while let Some(item) = messages.recv().await {
         let message = match item {
             // Nothing after the handshake can be written correctly until the probe has said
@@ -1752,14 +1753,15 @@ async fn forward_in_order<C: ProxyTransport, S: ProxyTransport>(
         if shared.bridge_locally(&message).await {
             continue;
         }
-        if let Some(barrier) = initialized_delivered.as_mut()
+        if let Some((barrier, deadline)) = initialized_delivered.as_mut()
             && !barrier.is_finished()
         {
-            let _ = tokio::time::timeout(shared.options.lifecycle_barrier_timeout, barrier).await;
+            let _ = tokio::time::timeout_at(*deadline, barrier).await;
         }
         let task = tokio::spawn(Arc::clone(&shared).send_to_server(message.clone()));
         if message["method"] == "notifications/initialized" && message.get("id").is_none() {
-            initialized_delivered = Some(task);
+            let deadline = tokio::time::Instant::now() + shared.options.lifecycle_barrier_timeout;
+            initialized_delivered = Some((task, deadline));
         }
     }
 }
