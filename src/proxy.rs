@@ -1,7 +1,10 @@
 //! The bidirectional proxy between the local client and the remote server
-//! (`mcpProxy` in utils.ts), in its `legacy` protocol mode.
+//! (`mcpProxy` in utils.ts).
 //!
-//! Not yet ported: the `auto` protocol mode (era probe and bridging).
+//! In the `auto` protocol mode the first handshake is preceded by one `server/discover`, and a
+//! 2026-07-28 server is bridged: the handshake is answered here and every request is stamped with
+//! the metadata that era requires. Not yet ported: the change-notification subscription, the
+//! multi-round-trip `input_required` exchange, and re-addressing cancellations to a retry leg.
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -16,6 +19,13 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::connect::{RemoteTransport, StreamReconnectHook};
 use crate::logging::{debug_log, log};
+use crate::protocol_era::{
+    EraVerdict, LegacyClientIdentity, ProtocolMode, RETIRED_SET_LOG_LEVEL,
+    RETIRED_SUBSCRIBE_RESOURCE, RETIRED_UNSUBSCRIBE_RESOURCE, discover_request,
+    is_dropped_in_modern_era, is_modern_only_notification, local_answer_for,
+    read_era_from_discover_response, stamp_log_level, stamp_modern_meta, strip_subscription_meta,
+    subscription_filter_for, synthesize_initialize_result, unacknowledged_subscriptions,
+};
 use crate::stdio::{StdioServerTransport, TransportEvent};
 use crate::streamable_http::{StreamableHttpClientTransport, TransportError};
 use crate::utils::{MCP_REMOTE_VERSION, ignored_tool_call_error, transform_proxy_response};
@@ -36,6 +46,9 @@ const RECONNECT_ENDPOINT_POLL: Duration = Duration::from_millis(25);
 
 /// How long to wait for the remote server to answer a re-initialize after its session expired.
 pub const REINITIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long the `server/discover` probe waits for an answer before treating the server as legacy.
+pub const DISCOVER_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The prefix every id this proxy mints carries.
 pub const OWN_ID_PREFIX: &str = "mcp-remote-";
@@ -195,6 +208,9 @@ pub struct ProxyOptions {
     pub lifecycle_barrier_timeout: Duration,
     /// The transport's `onStreamReconnect` slot, which the proxy fills for as long as it runs.
     pub stream_reconnect: Option<StreamReconnectHook>,
+    /// Whether to look for a 2026-07-28 server before handing it a handshake it no longer answers.
+    pub protocol_mode: ProtocolMode,
+    pub discover_timeout: Duration,
 }
 
 impl Default for ProxyOptions {
@@ -208,6 +224,8 @@ impl Default for ProxyOptions {
             reinitialize_timeout: REINITIALIZE_TIMEOUT,
             lifecycle_barrier_timeout: LIFECYCLE_BARRIER_TIMEOUT,
             stream_reconnect: None,
+            protocol_mode: ProtocolMode::Legacy,
+            discover_timeout: DISCOVER_TIMEOUT,
         }
     }
 }
@@ -321,6 +339,26 @@ struct Shared<C, S> {
     reinitialize_flight: SingleFlight,
     /// `sessionResumption`: true while the session is re-handshaked after the stream came back.
     resuming: watch::Sender<bool>,
+    /// Set once the probe has run. Until then nothing is known about the server's era.
+    era: Mutex<Option<EraVerdict>>,
+    /// Set when the probe is queued, so a client re-sending `initialize` does not start a second.
+    negotiation_started: std::sync::atomic::AtomicBool,
+    /// What the client said in its `initialize`, replayed into the `_meta` of every modern request.
+    client_identity: Mutex<LegacyClientIdentity>,
+    discover_seq: AtomicU64,
+    pending_discover: Mutex<HashMap<String, oneshot::Sender<Value>>>,
+    /// Resources the client subscribed to, in the order it asked, which the modern era carries on
+    /// the listen stream instead.
+    subscribed_resources: Mutex<Vec<String>>,
+    /// The minimum log level the client asked for, which the modern era carries per request.
+    requested_log_level: Mutex<Option<String>>,
+}
+
+/// What the forwarder works through, in the order the client sent it.
+enum Forward {
+    /// The client's first handshake, held until the probe says which era to answer it in.
+    Negotiate(Value),
+    Message(Value),
 }
 
 impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
@@ -340,7 +378,204 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
         let Some(request) = self.lock_transformer().remove(&id_key(&message["id"])) else {
             return message;
         };
-        transform_proxy_response(&self.options.ignored_tools, false, &request, message)
+        let modern = self.modern_era().is_some();
+        transform_proxy_response(&self.options.ignored_tools, modern, &request, message)
+    }
+
+    /// The revision and `server/discover` result of a server being bridged, if it is modern.
+    fn modern_era(&self) -> Option<(String, Value)> {
+        match &*lock(&self.era) {
+            Some(EraVerdict::Modern { version, discover }) => {
+                Some((version.clone(), discover.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Stamps a request with what the modern era carries per request, when bridging to one.
+    fn written_for_era(&self, message: &Value) -> Value {
+        match self.modern_era() {
+            Some((version, _)) if is_request(message) => {
+                let identity = lock(&self.client_identity).clone();
+                let level = lock(&self.requested_log_level).clone();
+                stamp_log_level(
+                    stamp_modern_meta(message, &identity, &version),
+                    level.as_deref(),
+                )
+            }
+            _ => message.clone(),
+        }
+    }
+
+    /// `negotiateEra`: finds out which era the remote server belongs to with one
+    /// `server/discover`, and answers the client's handshake either way. Only a `DiscoverResult`
+    /// changes what happens next; anything else ends with the `initialize` going out as before.
+    async fn negotiate_era(self: Arc<Self>, initialize: Value) {
+        let id = format!(
+            "{OWN_ID_PREFIX}discover-{}",
+            self.discover_seq.fetch_add(1, Ordering::SeqCst) + 1
+        );
+        let identity = lock(&self.client_identity).clone();
+        let (settle, answer) = oneshot::channel();
+        lock(&self.pending_discover).insert(id.clone(), settle);
+        let probe = async {
+            self.server
+                .send_message(discover_request(&id, &identity))
+                .await
+                .map_err(|error| error.to_string())?;
+            answer
+                .await
+                .map_err(|_| "the connection closed before this could be answered".to_owned())
+        };
+        let response = match tokio::time::timeout(self.options.discover_timeout, probe).await {
+            Ok(response) => response,
+            Err(_) => Err("timed out waiting for the server/discover response".to_owned()),
+        };
+        let era = match response {
+            Ok(response) => read_era_from_discover_response(&response),
+            Err(reason) => {
+                lock(&self.pending_discover).remove(&id);
+                debug_log(
+                    "server/discover produced no evidence of a modern server",
+                    &[Value::String(reason.clone())],
+                );
+                EraVerdict::Legacy { reason }
+            }
+        };
+        *lock(&self.era) = Some(era.clone());
+
+        match era {
+            EraVerdict::Modern { version, discover } => {
+                log(
+                    &format!(
+                        "Remote server speaks MCP {version}; answering the local client's handshake here and bridging every request"
+                    ),
+                    &[],
+                );
+                debug_log(
+                    "Bridging to a modern server",
+                    &[json!({"version": version, "capabilities": discover.get("capabilities")})],
+                );
+                // Nothing will answer an `initialize` we never send, and the header has to name
+                // the revision the `_meta` of every request will, or the server answers -32020
+                *lock(&self.initialize_request_id) = None;
+                self.server.set_protocol_version(version);
+                self.send_to_client(json!({
+                    "jsonrpc": "2.0",
+                    "id": initialize["id"],
+                    "result": synthesize_initialize_result(&discover, &identity),
+                }))
+                .await;
+            }
+            EraVerdict::Incompatible { reason } => {
+                // Falling back to `initialize` here would fail too, and hide why it failed
+                log(&format!("Cannot bridge to this server: {reason}"), &[]);
+                self.send_to_client(json!({
+                    "jsonrpc": "2.0",
+                    "id": initialize["id"],
+                    "error": {
+                        "code": -32603,
+                        "message": format!("mcp-remote cannot bridge to this server: {reason}"),
+                    },
+                }))
+                .await;
+            }
+            EraVerdict::Legacy { reason } => {
+                debug_log(
+                    "Treating the remote server as legacy",
+                    &[json!({"reason": reason})],
+                );
+                tokio::spawn(self.send_to_server(initialize));
+            }
+        }
+    }
+
+    /// The part of `forwardInOrder` that answers or drops what a modern server has no method
+    /// for. Returns whether the message was dealt with here.
+    async fn bridge_locally(&self, message: &Value) -> bool {
+        let Some((_, discover)) = self.modern_era() else {
+            return false;
+        };
+        let Some(method) = message.get("method").and_then(Value::as_str) else {
+            return false;
+        };
+
+        if let Some(answer) = local_answer_for(method) {
+            // Retired methods whose effect this proxy still owes the client
+            let params = message.get("params");
+            let uri = params
+                .and_then(|params| params.get("uri"))
+                .and_then(Value::as_str);
+            match (method, uri) {
+                (RETIRED_SUBSCRIBE_RESOURCE, Some(uri)) => {
+                    let mut resources = lock(&self.subscribed_resources);
+                    if !resources.iter().any(|resource| resource == uri) {
+                        resources.push(uri.to_owned());
+                    }
+                }
+                (RETIRED_UNSUBSCRIBE_RESOURCE, Some(uri)) => {
+                    lock(&self.subscribed_resources).retain(|resource| resource != uri);
+                }
+                (RETIRED_SET_LOG_LEVEL, _) => {
+                    if let Some(level) = params
+                        .and_then(|params| params.get("level"))
+                        .and_then(Value::as_str)
+                    {
+                        *lock(&self.requested_log_level) = Some(level.to_owned());
+                        debug_log(
+                            "Recording the log level to carry on every later request",
+                            &[json!({"level": level})],
+                        );
+                    }
+                }
+                _ => {}
+            }
+
+            // A request is answered; the same method sent as a notification is simply dropped
+            if has_id(message) {
+                debug_log(
+                    "Answering locally a method the modern era does not define",
+                    &[json!({"method": method})],
+                );
+                self.release(&message["id"], None);
+                self.send_to_client(
+                    json!({"jsonrpc": "2.0", "id": message["id"], "result": answer}),
+                )
+                .await;
+            } else {
+                debug_log(
+                    "Dropping a notification for a method the modern era does not define",
+                    &[json!({"method": method})],
+                );
+            }
+            return true;
+        }
+
+        if is_dropped_in_modern_era(method) {
+            debug_log(
+                "Dropping a notification the modern era has no place for",
+                &[json!({"method": method})],
+            );
+            return true;
+        }
+
+        // The handshake was answered here, so a repeat is this proxy's to answer too
+        if method == "initialize" && has_id(message) {
+            debug_log(
+                "Answering a repeated handshake from the bridge rather than forwarding it",
+                &[],
+            );
+            let identity = lock(&self.client_identity).clone();
+            self.send_to_client(json!({
+                "jsonrpc": "2.0",
+                "id": message["id"],
+                "result": synthesize_initialize_result(&discover, &identity),
+            }))
+            .await;
+            return true;
+        }
+
+        false
     }
 
     /// Releases the held request for an answer that did not come from the server.
@@ -397,7 +632,10 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
             if awaits_answer {
                 self.lock_pending().insert(id_key(&message["id"]));
             }
-            let error = match self.server.send_message(message.clone()).await {
+            // Stamped here rather than on arrival, which can be before the probe has said which
+            // era to speak
+            let outgoing = self.written_for_era(&message);
+            let error = match self.server.send_message(outgoing).await {
                 Ok(()) => {
                     if message["method"] == "initialize" {
                         self.schedule_initialize_timeout(message);
@@ -473,7 +711,7 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
             let retried = match Arc::clone(&self).reinitialize_session().await {
                 Ok(()) => self
                     .server
-                    .send_message(message.clone())
+                    .send_message(self.written_for_era(&message))
                     .await
                     .map_err(|error| error.to_string()),
                 Err(error) => Err(error),
@@ -642,6 +880,11 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
                 tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
             loop {
                 timer.tick().await;
+                // `ping` is not a method the 2026-07-28 era defines, and a stateless server has
+                // no session whose liveness could lapse
+                if self.modern_era().is_some() {
+                    continue;
+                }
                 let id = format!(
                     "{OWN_ID_PREFIX}keepalive-{}",
                     self.ping_seq.fetch_add(1, Ordering::SeqCst) + 1
@@ -663,7 +906,10 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
 
     /// Settles every request this proxy made on its own account with an error.
     fn fail_own_pending_requests(&self, reason: &str) {
-        for (id, settle) in lock(&self.pending_reinit).drain() {
+        let mut pending: Vec<(String, oneshot::Sender<Value>)> =
+            lock(&self.pending_discover).drain().collect();
+        pending.extend(lock(&self.pending_reinit).drain());
+        for (id, settle) in pending {
             let _ = settle.send(json!({
                 "jsonrpc": "2.0",
                 "id": id,
@@ -690,7 +936,11 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
         });
     }
 
-    async fn on_client_message(&self, mut message: Value, forward: &mpsc::UnboundedSender<Value>) {
+    async fn on_client_message(
+        &self,
+        mut message: Value,
+        forward: &mpsc::UnboundedSender<Forward>,
+    ) {
         let id = message.get("id").cloned().unwrap_or(Value::Null);
         if is_own_id(&id) {
             if message.get("method").is_some() {
@@ -759,9 +1009,37 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
                 &[json!({"clientInfo": message["params"]["clientInfo"]})],
             );
             *lock(&self.last_initialize) = Some(message.clone());
+            let params = message.get("params");
+            *lock(&self.client_identity) = LegacyClientIdentity {
+                protocol_version: params
+                    .and_then(|params| params.get("protocolVersion"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                capabilities: Some(
+                    params
+                        .and_then(|params| params.get("capabilities"))
+                        .and_then(Value::as_object)
+                        .cloned()
+                        .unwrap_or_default(),
+                ),
+                client_info: params
+                    .and_then(|params| params.get("clientInfo"))
+                    .filter(|client_info| !client_info.is_null())
+                    .cloned(),
+            };
+
+            // The handshake is the only moment the era can be settled, and only once: a client
+            // re-sending `initialize` during the probe must not start a second one
+            if self.options.protocol_mode == ProtocolMode::Auto
+                && lock(&self.era).is_none()
+                && !self.negotiation_started.swap(true, Ordering::SeqCst)
+            {
+                let _ = forward.send(Forward::Negotiate(message));
+                return;
+            }
         }
 
-        let _ = forward.send(message);
+        let _ = forward.send(Forward::Message(message));
     }
 
     async fn on_server_message(&self, message: Value) {
@@ -784,7 +1062,10 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
             if lock(&self.pending_pings).remove(key) {
                 return;
             }
-            if let Some(settle) = lock(&self.pending_reinit).remove(key) {
+            let settle = lock(&self.pending_discover)
+                .remove(key)
+                .or_else(|| lock(&self.pending_reinit).remove(key));
+            if let Some(settle) = settle {
                 let _ = settle.send(message);
                 return;
             }
@@ -795,11 +1076,50 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
             return;
         }
 
+        let modern = self.modern_era();
+
+        // Confirmation of a stream this proxy opened for the client, which it never asked for
+        if let Some((_, discover)) = &modern
+            && let Some(method) = message.get("method").and_then(Value::as_str)
+            && is_modern_only_notification(method)
+        {
+            let resources = lock(&self.subscribed_resources).clone();
+            let capabilities = discover.get("capabilities").and_then(Value::as_object);
+            if let Some(Value::Object(requested)) =
+                subscription_filter_for(capabilities, &resources)
+            {
+                let granted = message
+                    .get("params")
+                    .and_then(|params| params.get("notifications"));
+                let missing = unacknowledged_subscriptions(&requested, granted);
+                if !missing.is_empty() {
+                    // Otherwise a type the server quietly dropped is one the client waits for
+                    log(
+                        &format!(
+                            "The remote server did not subscribe this client to: {}",
+                            missing.join(", ")
+                        ),
+                        &[],
+                    );
+                }
+            }
+            debug_log(
+                "Consuming a notification that belongs to this proxy, not the client",
+                &[json!({"method": method})],
+            );
+            return;
+        }
+
         if !id.is_null() {
             self.lock_pending().remove(&id_key(&id));
         }
 
         let message = self.intercept_response(message);
+        let message = if modern.is_some() {
+            strip_subscription_meta(message)
+        } else {
+            message
+        };
         log("[Remote→Local]", &[method_or_id(&message)]);
         debug_log(
             "Remote → Local message",
@@ -837,10 +1157,22 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
 /// that notification has been delivered (or the barrier times out).
 async fn forward_in_order<C: ProxyTransport, S: ProxyTransport>(
     shared: Arc<Shared<C, S>>,
-    mut messages: mpsc::UnboundedReceiver<Value>,
+    mut messages: mpsc::UnboundedReceiver<Forward>,
 ) {
     let mut initialized_delivered: Option<tokio::task::JoinHandle<()>> = None;
-    while let Some(message) = messages.recv().await {
+    while let Some(item) = messages.recv().await {
+        let message = match item {
+            // Nothing after the handshake can be written correctly until the probe has said
+            // which era to write it in, so everything queues behind it
+            Forward::Negotiate(initialize) => {
+                Arc::clone(&shared).negotiate_era(initialize).await;
+                continue;
+            }
+            Forward::Message(message) => message,
+        };
+        if shared.bridge_locally(&message).await {
+            continue;
+        }
         if let Some(barrier) = initialized_delivered.as_mut()
             && !barrier.is_finished()
         {
@@ -876,6 +1208,13 @@ pub async fn mcp_proxy<C: ProxyTransport, S: ProxyTransport>(
         reauthorize_flight: SingleFlight::default(),
         reinitialize_flight: SingleFlight::default(),
         resuming: watch::Sender::new(false),
+        era: Mutex::new(None),
+        negotiation_started: std::sync::atomic::AtomicBool::new(false),
+        client_identity: Mutex::new(LegacyClientIdentity::default()),
+        discover_seq: AtomicU64::new(0),
+        pending_discover: Mutex::new(HashMap::new()),
+        subscribed_resources: Mutex::new(Vec::new()),
+        requested_log_level: Mutex::new(None),
     });
     let reconnect_slot = shared.options.stream_reconnect.clone();
     if let Some(slot) = &reconnect_slot {

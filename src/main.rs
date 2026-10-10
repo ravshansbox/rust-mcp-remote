@@ -23,8 +23,7 @@ use serde_json::{Value, json};
 
 const USAGE: &str = "Usage: mcp-remote <https://server-url> [callback-port] [--debug]";
 
-/// `runProxy` from proxy.ts. Not yet ported: mid-session re-authorization and the
-/// rejected-token reset from inside the proxy, keep-alive, and the `auto` protocol mode.
+/// `runProxy` from proxy.ts.
 async fn run_proxy(args: CommandLineArgs) -> Result<(), String> {
     let events = AuthEvents::new();
 
@@ -251,6 +250,7 @@ async fn run_proxy(args: CommandLineArgs) -> Result<(), String> {
             reauthorize: Some(reauthorize),
             forget_rejected_authorization: Some(forget_rejected),
             stream_reconnect: Some(on_stream_reconnect),
+            protocol_mode: args.protocol_mode,
             ..ProxyOptions::default()
         },
     );
