@@ -15,6 +15,7 @@ use tokio::sync::mpsc;
 mod era_bridging;
 mod input_required;
 mod stream_reconnect;
+mod subscription;
 
 /// An in-memory transport: what the proxy sends is recorded on `sent`, and
 /// `fail_with` makes every send fail, and `fail_next` fails the next few.

@@ -4,8 +4,8 @@
 //! In the `auto` protocol mode the first handshake is preceded by one `server/discover`, and a
 //! 2026-07-28 server is bridged: the handshake is answered here and every request is stamped with
 //! the metadata that era requires. A server answering `input_required` has its questions put to
-//! the client and the request retried with the answers. Not yet ported: the change-notification
-//! subscription.
+//! the client and the request retried with the answers, and a `subscriptions/listen` stream is
+//! opened on the client's behalf so it keeps hearing about changes.
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -27,7 +27,8 @@ use crate::protocol_era::{
     input_required_retry_params, is_dropped_in_modern_era, is_input_required_result,
     is_modern_only_notification, local_answer_for, read_era_from_discover_response,
     stamp_log_level, stamp_modern_meta, strip_subscription_meta, subscription_filter_for,
-    synthesize_initialize_result, translate_modern_result, unacknowledged_subscriptions,
+    subscriptions_listen_request, synthesize_initialize_result, translate_modern_result,
+    unacknowledged_subscriptions,
 };
 use crate::stdio::{StdioServerTransport, TransportEvent};
 use crate::streamable_http::{StreamableHttpClientTransport, TransportError};
@@ -56,6 +57,24 @@ pub const DISCOVER_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long each leg of a multi-round-trip exchange may take: a question to the client is a model
 /// call or a person reading something, not a request that was never expected to run long.
 pub const MULTI_ROUND_TRIP_LEG_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+/// How long a `subscriptions/listen` stream may stay open. Not a request timeout: the request
+/// is the stream, so this bounds a session's worth of change notifications.
+pub const SUBSCRIPTION_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// How long to wait before reopening a change-notification stream that ended.
+pub const SUBSCRIPTION_REOPEN_DELAY: Duration = Duration::from_secs(2);
+
+/// How many times a change-notification stream may end without ever staying open before this
+/// stops reopening it.
+pub const SUBSCRIPTION_REOPEN_LIMIT: u32 = 5;
+
+/// How long a stream has to stay open to count as having worked. Below this it did not really
+/// open, and reopening it on a timer would be a request every couple of seconds forever.
+pub const SUBSCRIPTION_HELD_OPEN: Duration = Duration::from_secs(30);
+
+/// What `ask_remote` fails with when its `cancelled` future completes.
+const ASK_CANCELLED: &str = "the request was cancelled";
 
 /// The prefix every id this proxy mints carries.
 pub const OWN_ID_PREFIX: &str = "mcp-remote-";
@@ -218,6 +237,8 @@ pub struct ProxyOptions {
     /// Whether to look for a 2026-07-28 server before handing it a handshake it no longer answers.
     pub protocol_mode: ProtocolMode,
     pub discover_timeout: Duration,
+    pub subscription_reopen_delay: Duration,
+    pub subscription_held_open: Duration,
 }
 
 impl Default for ProxyOptions {
@@ -233,6 +254,8 @@ impl Default for ProxyOptions {
             stream_reconnect: None,
             protocol_mode: ProtocolMode::Legacy,
             discover_timeout: DISCOVER_TIMEOUT,
+            subscription_reopen_delay: SUBSCRIPTION_REOPEN_DELAY,
+            subscription_held_open: SUBSCRIPTION_HELD_OPEN,
         }
     }
 }
@@ -376,6 +399,14 @@ struct Shared<C, S> {
     /// because the client may reuse an id while a stranded exchange still runs under it.
     live_exchanges: Mutex<HashMap<String, u64>>,
     exchange_seq: AtomicU64,
+    /// Set once either transport has closed.
+    closed: watch::Sender<bool>,
+    /// `refreshSubscription`: bumped whenever the client changes what it wants listened to, which
+    /// both wakes an idle wait and cancels the stream listening for the old filter.
+    subscription_generation: watch::Sender<u64>,
+    /// Whether to leave resource subscriptions out of the filter: set when a server refuses a
+    /// filter naming them, cleared the next time the client changes what it wants.
+    drop_resource_subscriptions: std::sync::atomic::AtomicBool,
 }
 
 /// What the forwarder works through, in the order the client sent it.
@@ -484,13 +515,18 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
                 // Nothing will answer an `initialize` we never send, and the header has to name
                 // the revision the `_meta` of every request will, or the server answers -32020
                 *lock(&self.initialize_request_id) = None;
-                self.server.set_protocol_version(version);
+                self.server.set_protocol_version(version.clone());
                 self.send_to_client(json!({
                     "jsonrpc": "2.0",
                     "id": initialize["id"],
                     "result": synthesize_initialize_result(&discover, &identity),
                 }))
                 .await;
+                let capabilities = discover
+                    .get("capabilities")
+                    .and_then(Value::as_object)
+                    .cloned();
+                tokio::spawn(Arc::clone(&self).open_change_subscription(version, capabilities));
             }
             EraVerdict::Incompatible { reason } => {
                 // Falling back to `initialize` here would fail too, and hide why it failed
@@ -568,9 +604,12 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
                     if !resources.iter().any(|resource| resource == uri) {
                         resources.push(uri.to_owned());
                     }
+                    drop(resources);
+                    self.refresh_subscription();
                 }
                 (RETIRED_UNSUBSCRIBE_RESOURCE, Some(uri)) => {
                     lock(&self.subscribed_resources).retain(|resource| resource != uri);
+                    self.refresh_subscription();
                 }
                 (RETIRED_SET_LOG_LEVEL, _) => {
                     if let Some(level) = params
@@ -636,18 +675,28 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
 
     /// `askRemote`: issues a request to the remote server on this proxy's own account and waits
     /// for its answer. `build` is handed the minted id.
+    ///
+    /// `cancelled`, when it completes, gives up on the answer and tells the server, because a
+    /// `subscriptions/listen` that is abandoned rather than cancelled stays open and goes on
+    /// delivering.
     async fn ask_remote(
         &self,
         build: impl FnOnce(&str) -> Value,
         timeout: Duration,
+        cancelled: impl Future<Output = ()>,
     ) -> Result<Value, String> {
         let id = format!(
             "{OWN_ID_PREFIX}own-{}",
             self.own_request_seq.fetch_add(1, Ordering::SeqCst) + 1
         );
+        tokio::pin!(cancelled);
         // The same barrier `send_to_server` waits on; without it a retry leg is POSTed onto the
-        // session that just went away
-        self.await_session_resumption().await;
+        // session that just went away. Cancelled before it was ever sent, there is nothing to
+        // tell the server about.
+        tokio::select! {
+            _ = self.await_session_resumption() => {}
+            _ = &mut cancelled => return Err(ASK_CANCELLED.to_owned()),
+        }
 
         let (settle, answer) = oneshot::channel();
         lock(&self.pending_own).insert(id.clone(), settle);
@@ -655,14 +704,189 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
             lock(&self.pending_own).remove(&id);
             return Err(error.to_string());
         }
-        match tokio::time::timeout(timeout, answer).await {
-            Ok(Ok(message)) => Ok(message),
-            Ok(Err(_)) => Err("the connection closed before this could be answered".to_owned()),
-            Err(_) => {
+        tokio::select! {
+            answer = tokio::time::timeout(timeout, answer) => match answer {
+                Ok(Ok(message)) => Ok(message),
+                Ok(Err(_)) => {
+                    Err("the connection closed before this could be answered".to_owned())
+                }
+                Err(_) => {
+                    lock(&self.pending_own).remove(&id);
+                    Err("timed out waiting for the remote server to answer".to_owned())
+                }
+            },
+            _ = &mut cancelled => {
                 lock(&self.pending_own).remove(&id);
-                Err("timed out waiting for the remote server to answer".to_owned())
+                let cancellation = json!({
+                    "jsonrpc": "2.0",
+                    "method": "notifications/cancelled",
+                    "params": {"requestId": id},
+                });
+                let _ = self.server.send_message(cancellation).await;
+                Err(ASK_CANCELLED.to_owned())
             }
         }
+    }
+
+    /// `refreshSubscription`: the client changed what it wants listened to.
+    fn refresh_subscription(&self) {
+        self.drop_resource_subscriptions
+            .store(false, Ordering::SeqCst);
+        self.subscription_generation
+            .send_modify(|generation| *generation += 1);
+    }
+
+    fn is_closed(&self) -> bool {
+        *self.closed.borrow()
+    }
+
+    async fn wait_closed(&self) {
+        let mut closed = self.closed.subscribe();
+        let _ = closed.wait_for(|closed| *closed).await;
+    }
+
+    /// Sleeps for `duration`, returning whether there is still a connection worth working on.
+    async fn pause(&self, duration: Duration) -> bool {
+        tokio::select! {
+            _ = tokio::time::sleep(duration) => !self.is_closed(),
+            _ = self.wait_closed() => false,
+        }
+    }
+
+    /// `openChangeSubscription`: opens the change-notification stream a 2025-era client would
+    /// never open for itself. That era had `notifications/tools/list_changed` and friends simply
+    /// arrive; the modern era sends them only down a `subscriptions/listen` stream, so this asks
+    /// on the client's behalf for exactly what the server said it can send.
+    ///
+    /// Nothing awaits this: failing to open the stream costs the client change notifications, not
+    /// its session.
+    async fn open_change_subscription(
+        self: Arc<Self>,
+        version: String,
+        capabilities: Option<serde_json::Map<String, Value>>,
+    ) {
+        let delay = self.options.subscription_reopen_delay;
+        let mut generation = self.subscription_generation.subscribe();
+        // Counts only streams the server ended as soon as they opened. A reopen the client asked
+        // for spends none of this budget.
+        let mut short_lived_streams = 0;
+
+        while short_lived_streams < SUBSCRIPTION_REOPEN_LIMIT {
+            // Marked seen before the filter is read, so a change made after this point always
+            // reopens or wakes what follows
+            generation.borrow_and_update();
+            let resources = if self.drop_resource_subscriptions.load(Ordering::SeqCst) {
+                Vec::new()
+            } else {
+                lock(&self.subscribed_resources).clone()
+            };
+            let Some(Value::Object(notifications)) =
+                subscription_filter_for(capabilities.as_ref(), &resources)
+            else {
+                // A later `resources/subscribe` is what gives this a reason to exist
+                debug_log(
+                    "Nothing to subscribe to yet; waiting for the client to ask for something",
+                    &[],
+                );
+                short_lived_streams = 0;
+                tokio::select! {
+                    _ = generation.changed() => continue,
+                    _ = self.wait_closed() => return,
+                }
+            };
+
+            let opened_at = std::time::Instant::now();
+            debug_log(
+                "Subscribing to change notifications on the client behalf",
+                &[json!({"notifications": notifications})],
+            );
+            let identity = lock(&self.client_identity).clone();
+            let mut reopen = generation.clone();
+            // Cancelled rather than abandoned when the filter changes: a stream left open goes on
+            // delivering, so the client would see every change once per filter it ever asked for
+            let reopened = async move {
+                let _ = reopen.changed().await;
+            };
+            let response = self
+                .ask_remote(
+                    |id| subscriptions_listen_request(id, &identity, &version, &notifications),
+                    SUBSCRIPTION_LIFETIME,
+                    reopened,
+                )
+                .await;
+
+            match response {
+                Ok(response) if response.get("error").is_some() => {
+                    // A transport that has gone answers everything outstanding with an error,
+                    // and that is not the server refusing anything
+                    if self.is_closed() {
+                        return;
+                    }
+                    let error = response["error"].to_string();
+                    if !self.drop_resource_subscriptions.load(Ordering::SeqCst)
+                        && !lock(&self.subscribed_resources).is_empty()
+                    {
+                        // The filter named resources; the rest of it may still be acceptable
+                        log(
+                            &format!(
+                                "The remote server refused a subscription naming resources; listening for the rest: {error}"
+                            ),
+                            &[],
+                        );
+                        self.drop_resource_subscriptions
+                            .store(true, Ordering::SeqCst);
+                        continue;
+                    }
+                    // A refusal is a decision, not a flake; reopening would only ask again
+                    log(
+                        &format!(
+                            "The remote server refused the change-notification subscription: {error}"
+                        ),
+                        &[],
+                    );
+                    return;
+                }
+                Ok(_) => debug_log(
+                    "The change-notification stream ended",
+                    &[json!({"heldForMs": opened_at.elapsed().as_millis() as u64})],
+                ),
+                Err(error) if error == ASK_CANCELLED => {
+                    debug_log(
+                        "Reopening the change-notification stream against a filter the client changed",
+                        &[],
+                    );
+                    // Debounced, so a client subscribing in a tight loop cannot turn each call
+                    // into an immediate round trip
+                    if self.is_closed() || !self.pause(delay).await {
+                        return;
+                    }
+                    continue;
+                }
+                Err(error) => debug_log(
+                    "The change-notification stream failed",
+                    &[json!({
+                        "heldForMs": opened_at.elapsed().as_millis() as u64,
+                        "error": error,
+                    })],
+                ),
+            }
+
+            // A stream that stayed open did its job, so the budget starts again. One that ended
+            // immediately is a server that does not really hold it open.
+            if opened_at.elapsed() >= self.options.subscription_held_open {
+                short_lived_streams = 0;
+            } else {
+                short_lived_streams += 1;
+            }
+            if self.is_closed() || !self.pause(delay).await {
+                return;
+            }
+        }
+
+        log(
+            "Giving up on change notifications: the subscription stream kept ending as soon as it opened",
+            &[],
+        );
     }
 
     /// `askClient`: puts a request to the local client on the remote server's behalf. A 2025-era
@@ -807,6 +1031,7 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
                         )
                     },
                     MULTI_ROUND_TRIP_LEG_TIMEOUT,
+                    std::future::pending(),
                 )
                 .await?;
 
@@ -1577,6 +1802,9 @@ pub async fn mcp_proxy<C: ProxyTransport, S: ProxyTransport>(
         modern_retry_ids: Mutex::new(HashMap::new()),
         live_exchanges: Mutex::new(HashMap::new()),
         exchange_seq: AtomicU64::new(0),
+        closed: watch::Sender::new(false),
+        subscription_generation: watch::Sender::new(0),
+        drop_resource_subscriptions: std::sync::atomic::AtomicBool::new(false),
     });
     let reconnect_slot = shared.options.stream_reconnect.clone();
     if let Some(slot) = &reconnect_slot {
@@ -1613,6 +1841,7 @@ pub async fn mcp_proxy<C: ProxyTransport, S: ProxyTransport>(
                 Some(TransportEvent::Close) | None => {
                     stop_keep_alive(&mut keep_alive);
                     client_closed = true;
+                    shared.closed.send_replace(true);
                     shared.fail_own_pending_requests(CLOSED);
                     if !server_closed {
                         debug_log("Local transport closed, closing remote transport", &[]);
@@ -1626,6 +1855,7 @@ pub async fn mcp_proxy<C: ProxyTransport, S: ProxyTransport>(
                 Some(TransportEvent::Close) | None => {
                     stop_keep_alive(&mut keep_alive);
                     server_closed = true;
+                    shared.closed.send_replace(true);
                     shared.fail_own_pending_requests(CLOSED);
                     if !client_closed {
                         debug_log("Remote transport closed, closing local transport", &[]);
