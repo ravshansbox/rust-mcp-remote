@@ -474,3 +474,100 @@ async fn an_sse_only_strategy_signs_in_from_the_stream_and_redeems_the_code_on_i
     assert_eq!(connection.transport.name(), "SSEClientTransport");
     connection.transport.close();
 }
+
+/// Connects in protocol mode `auto` to a server that answers `server/discover` with `discover`,
+/// and returns the outcome with the JSON-RPC methods it was sent, in order.
+async fn connect_in_auto_mode(
+    discover: fn() -> crate::test_server::Reply,
+) -> (Result<(), String>, Vec<(String, Option<String>)>) {
+    let (base, mut requests) = serve(Arc::new(move |request: &RecordedRequest| {
+        let body: Value = serde_json::from_str(&request.body).unwrap_or(Value::Null);
+        match body["method"].as_str() {
+            Some("server/discover") => discover(),
+            Some("initialize") => reply(
+                200,
+                &[("content-type", "application/json")],
+                &json!({"jsonrpc": "2.0", "id": body["id"], "result": {
+                    "protocolVersion": "2025-06-18", "capabilities": {},
+                    "serverInfo": {"name": "fake", "version": "1"}}})
+                .to_string(),
+            ),
+            _ => reply(202, &[], ""),
+        }
+    }))
+    .await;
+    let auth = FakeAuth::new(false);
+    let mut options = options(&base);
+    options.protocol_mode = ProtocolMode::Auto;
+    options.transport_strategy = TransportStrategy::HttpOnly;
+    let outcome = connect_to_remote_server(
+        &Remote(Arc::clone(&auth)),
+        &owner_of("unused", None),
+        &options,
+    )
+    .await
+    .map(|_| ())
+    .map_err(|error| error.to_string());
+
+    let mut methods = Vec::new();
+    while let Ok(request) = requests.try_recv() {
+        let body: Value = serde_json::from_str(&request.body).unwrap_or(Value::Null);
+        if let Some(method) = body["method"].as_str() {
+            methods.push((
+                method.to_owned(),
+                request.header("mcp-protocol-version").map(str::to_owned),
+            ));
+        }
+    }
+    (outcome, methods)
+}
+
+#[tokio::test]
+async fn in_auto_mode_the_probe_sends_no_initialize_to_a_modern_server() {
+    let (outcome, methods) = connect_in_auto_mode(|| {
+        reply(
+            200,
+            &[("content-type", "application/json")],
+            &json!({"jsonrpc": "2.0", "id": "server-discover-probe-1", "result": {
+                "supportedVersions": ["2026-07-28"], "capabilities": {"tools": {}}}})
+            .to_string(),
+        )
+    })
+    .await;
+
+    assert_eq!(outcome, Ok(()));
+    assert_eq!(
+        methods,
+        [("server/discover".to_owned(), Some("2026-07-28".to_owned()))]
+    );
+}
+
+#[tokio::test]
+async fn in_auto_mode_the_probe_initializes_a_server_that_does_not_know_server_discover() {
+    let (outcome, methods) = connect_in_auto_mode(|| {
+        reply(
+            400,
+            &[("content-type", "application/json")],
+            r#"{"jsonrpc":"2.0","error":{"code":-32000,"message":"Bad Request: No valid session ID provided"},"id":null}"#,
+        )
+    })
+    .await;
+
+    assert_eq!(outcome, Ok(()));
+    let methods: Vec<&str> = methods.iter().map(|(method, _)| method.as_str()).collect();
+    assert_eq!(
+        methods,
+        ["server/discover", "initialize", "notifications/initialized"]
+    );
+}
+
+#[tokio::test]
+async fn in_auto_mode_a_probe_the_server_fails_with_a_5xx_is_an_error() {
+    let (outcome, methods) = connect_in_auto_mode(|| reply(503, &[], "down")).await;
+
+    assert_eq!(
+        outcome,
+        Err("Version negotiation failed: the server answered the probe with HTTP 503".to_owned())
+    );
+    assert_eq!(methods.len(), 1);
+}

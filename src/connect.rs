@@ -2,8 +2,7 @@
 //! client, and answers what the probe runs into - a sign-in, a token refused straight after it
 //! was issued, or a server that speaks the other transport.
 //!
-//! Not yet ported: the with-client mode client.ts uses, the `auto` protocol mode's version
-//! negotiation in the probe.
+//! Not yet ported: the with-client mode client.ts uses.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -20,7 +19,11 @@ use crate::callback_server::AuthCodeResult;
 use crate::logging::{debug_log, log};
 use crate::node_oauth_client_provider::CredentialScope;
 use crate::oauth_provider::OAuthProvider;
-use crate::protocol_era::{LATEST_PROTOCOL_VERSION, ProtocolMode, SUPPORTED_PROTOCOL_VERSIONS};
+use crate::protocol_era::{
+    LATEST_PROTOCOL_VERSION, LegacyClientIdentity, ProbeVerdict, ProtocolMode,
+    SUPPORTED_MODERN_VERSIONS, SUPPORTED_PROTOCOL_VERSIONS, classify_probe_error,
+    classify_probe_response, stamp_modern_meta,
+};
 use crate::sse_client::{SseClientOptions, SseClientTransport};
 use crate::stdio::TransportEvent;
 use crate::streamable_http::{
@@ -220,12 +223,153 @@ pub struct ConnectOptions {
     pub non_interactive_flow: bool,
 }
 
-/// The SDK `Client.connect` the throwaway probe does: `initialize`, then
+/// Why waiting for the answer to one request ended without it.
+enum Unanswered {
+    Closed,
+    TimedOut,
+}
+
+/// Waits for the message answering `id` on `events`.
+async fn answer_to(
+    events: &mut UnboundedReceiver<TransportEvent>,
+    id: &Value,
+) -> Result<Value, Unanswered> {
+    tokio::time::timeout(PROBE_TIMEOUT, async {
+        loop {
+            match events.recv().await {
+                Some(TransportEvent::Message(message)) if message.get("id") == Some(id) => {
+                    return Ok(message);
+                }
+                Some(TransportEvent::Close) | None => return Err(Unanswered::Closed),
+                Some(_) => {}
+            }
+        }
+    })
+    .await
+    .unwrap_or(Err(Unanswered::TimedOut))
+}
+
+/// `classifyHttpError` and its siblings: what a failed send of the probe says.
+fn classify_probe_send_error(error: TransportError, requested: &str) -> Result<(), TransportError> {
+    let negotiation_failed = |reason: String| {
+        Err(TransportError::Other(format!(
+            "Version negotiation probe failed: {reason}"
+        )))
+    };
+    match error {
+        TransportError::Unauthorized(_) | TransportError::Auth(_) => Err(error),
+        TransportError::Http { status, .. } if status == 401 || status == 403 => {
+            let reason = if status == 403 {
+                "the server denied access (HTTP 403)"
+            } else {
+                "the server requires authorization (HTTP 401)"
+            };
+            Err(TransportError::Http {
+                status,
+                message: format!("Version negotiation failed: {reason}"),
+            })
+        }
+        TransportError::Http { status, .. } if status >= 500 => Err(TransportError::Http {
+            status,
+            message: format!(
+                "Version negotiation failed: the server answered the probe with HTTP {status}"
+            ),
+        }),
+        TransportError::Http { message, .. } => {
+            let rpc_error = message
+                .strip_prefix("Error POSTing to endpoint: ")
+                .and_then(|body| serde_json::from_str::<Value>(body).ok())
+                .and_then(|body| body.get("error").cloned())
+                .filter(|error| error.get("code").is_some_and(Value::is_i64));
+            match rpc_error.map(|error| classify_probe_error(&error, requested)) {
+                Some(ProbeVerdict::Error(message)) => Err(TransportError::Other(message)),
+                _ => Ok(()),
+            }
+        }
+        TransportError::Other(message) if message.starts_with("Unexpected content type") => {
+            negotiation_failed(format!(
+                "the server answered with an unusable reply ({message})"
+            ))
+        }
+        other => negotiation_failed(other.to_string()),
+    }
+}
+
+/// The SDK's `negotiateEra` for an `auto` client: one `server/discover`, retried once on a
+/// corrective answer. Returns the modern version the server speaks, or None to fall back to
+/// `initialize`.
+async fn negotiate_probe_era(
+    transport: &StreamableHttpClientTransport,
+    events: &mut UnboundedReceiver<TransportEvent>,
+) -> Result<Option<String>, TransportError> {
+    let identity = LegacyClientIdentity {
+        protocol_version: None,
+        capabilities: Some(serde_json::Map::new()),
+        client_info: Some(PROBE_CLIENT_INFO.clone()),
+    };
+    let mut requested = SUPPORTED_MODERN_VERSIONS[0].to_owned();
+    let mut corrective_used = false;
+    for attempt in 1.. {
+        let id = json!(format!("server-discover-probe-{attempt}"));
+        let request = stamp_modern_meta(
+            &json!({"jsonrpc": "2.0", "id": id, "method": "server/discover", "params": {}}),
+            &identity,
+            &requested,
+        );
+        if let Err(error) = transport.send(&request).await {
+            classify_probe_send_error(error, &requested)?;
+            return Ok(None);
+        }
+        let answer = match answer_to(events, &id).await {
+            Ok(answer) => answer,
+            Err(Unanswered::Closed) => {
+                return Err(TransportError::Other(
+                    "Version negotiation probe failed: Connection closed during the version negotiation probe"
+                        .to_owned(),
+                ));
+            }
+            Err(Unanswered::TimedOut) => {
+                return Err(TransportError::Other(format!(
+                    "Version negotiation probe timed out after {}ms",
+                    PROBE_TIMEOUT.as_millis()
+                )));
+            }
+        };
+        match classify_probe_response(&answer, &requested) {
+            ProbeVerdict::Modern { version, .. } => return Ok(Some(version)),
+            ProbeVerdict::Legacy => return Ok(None),
+            ProbeVerdict::Error(message) => return Err(TransportError::Other(message)),
+            ProbeVerdict::Corrective { version } => {
+                if corrective_used {
+                    return Err(TransportError::Other(format!(
+                        "MCP error -32022: Unsupported protocol version: {requested}"
+                    )));
+                }
+                corrective_used = true;
+                requested = version;
+            }
+        }
+    }
+    unreachable!()
+}
+
+static PROBE_CLIENT_INFO: std::sync::LazyLock<Value> =
+    std::sync::LazyLock::new(|| json!({"name": "mcp-remote-fallback-test", "version": "0.0.0"}));
+
+/// The SDK `Client.connect` the throwaway probe does: in protocol mode `auto`, `server/discover`
+/// first, which settles a modern server; otherwise `initialize`, then
 /// `notifications/initialized`.
 async fn probe_initialize(
     transport: &StreamableHttpClientTransport,
     events: &mut UnboundedReceiver<TransportEvent>,
+    protocol_mode: ProtocolMode,
 ) -> Result<(), TransportError> {
+    if protocol_mode == ProtocolMode::Auto
+        && let Some(version) = negotiate_probe_era(transport, events).await?
+    {
+        transport.set_protocol_version(Some(version));
+        return Ok(());
+    }
     let request = json!({
         "jsonrpc": "2.0",
         "id": 0,
@@ -233,25 +377,16 @@ async fn probe_initialize(
         "params": {
             "protocolVersion": LATEST_PROTOCOL_VERSION,
             "capabilities": {},
-            "clientInfo": {"name": "mcp-remote-fallback-test", "version": "0.0.0"},
+            "clientInfo": PROBE_CLIENT_INFO.clone(),
         },
     });
     transport.send(&request).await?;
-    let answer = tokio::time::timeout(PROBE_TIMEOUT, async {
-        loop {
-            match events.recv().await {
-                Some(TransportEvent::Message(message)) if message.get("id") == Some(&json!(0)) => {
-                    return Ok(message);
-                }
-                Some(TransportEvent::Close) | None => {
-                    return Err(TransportError::Other("Connection closed".to_owned()));
-                }
-                Some(_) => {}
-            }
-        }
-    })
-    .await
-    .map_err(|_| TransportError::Other("Request timed out".to_owned()))??;
+    let answer = answer_to(events, &json!(0))
+        .await
+        .map_err(|unanswered| match unanswered {
+            Unanswered::Closed => TransportError::Other("Connection closed".to_owned()),
+            Unanswered::TimedOut => TransportError::Other("Request timed out".to_owned()),
+        })?;
 
     if let Some(error) = answer.get("error") {
         return Err(TransportError::Other(format!(
@@ -301,6 +436,7 @@ async fn attempt(
     auth: &dyn RemoteAuth,
     headers: &[(String, String)],
     strategy: TransportStrategy,
+    protocol_mode: ProtocolMode,
 ) -> Result<RemoteConnection, (TransportError, Option<RemoteTransport>)> {
     let sse_transport = matches!(
         strategy,
@@ -346,7 +482,7 @@ async fn attempt(
     debug_log("Creating test transport for HTTP-only connection test", &[]);
     let (probe, mut probe_events) = http_transport(url, auth, headers);
     let probed = match probe.start() {
-        Ok(()) => probe_initialize(&probe, &mut probe_events).await,
+        Ok(()) => probe_initialize(&probe, &mut probe_events, protocol_mode).await,
         Err(error) => Err(error),
     };
     if let Err(error) = probed {
@@ -394,11 +530,18 @@ pub async fn connect_to_remote_server(
             TransportStrategy::HttpFirst | TransportStrategy::SseFirst
         );
 
-        let (error, challenge_transport) =
-            match attempt(&url, auth, &options.headers, strategy).await {
-                Ok(connection) => return Ok(connection),
-                Err(failure) => failure,
-            };
+        let (error, challenge_transport) = match attempt(
+            &url,
+            auth,
+            &options.headers,
+            strategy,
+            options.protocol_mode,
+        )
+        .await
+        {
+            Ok(connection) => return Ok(connection),
+            Err(failure) => failure,
+        };
 
         if should_attempt_fallback && should_fall_back_on(&error) {
             let status = match &error {
