@@ -3,8 +3,9 @@
 //!
 //! In the `auto` protocol mode the first handshake is preceded by one `server/discover`, and a
 //! 2026-07-28 server is bridged: the handshake is answered here and every request is stamped with
-//! the metadata that era requires. Not yet ported: the change-notification subscription, the
-//! multi-round-trip `input_required` exchange, and re-addressing cancellations to a retry leg.
+//! the metadata that era requires. A server answering `input_required` has its questions put to
+//! the client and the request retried with the answers. Not yet ported: the change-notification
+//! subscription.
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -20,11 +21,13 @@ use tokio::sync::{mpsc, oneshot, watch};
 use crate::connect::{RemoteTransport, StreamReconnectHook};
 use crate::logging::{debug_log, log};
 use crate::protocol_era::{
-    EraVerdict, LegacyClientIdentity, ProtocolMode, RETIRED_SET_LOG_LEVEL,
-    RETIRED_SUBSCRIBE_RESOURCE, RETIRED_UNSUBSCRIBE_RESOURCE, discover_request,
-    is_dropped_in_modern_era, is_modern_only_notification, local_answer_for,
-    read_era_from_discover_response, stamp_log_level, stamp_modern_meta, strip_subscription_meta,
-    subscription_filter_for, synthesize_initialize_result, unacknowledged_subscriptions,
+    EraVerdict, LegacyClientIdentity, MAX_INPUT_REQUESTS_PER_ROUND, MAX_INPUT_REQUIRED_ROUNDS,
+    ProtocolMode, RETIRED_SET_LOG_LEVEL, RETIRED_SUBSCRIBE_RESOURCE, RETIRED_UNSUBSCRIBE_RESOURCE,
+    TranslatedResult, can_fulfil_input_request, client_declared_capability_for, discover_request,
+    input_required_retry_params, is_dropped_in_modern_era, is_input_required_result,
+    is_modern_only_notification, local_answer_for, read_era_from_discover_response,
+    stamp_log_level, stamp_modern_meta, strip_subscription_meta, subscription_filter_for,
+    synthesize_initialize_result, translate_modern_result, unacknowledged_subscriptions,
 };
 use crate::stdio::{StdioServerTransport, TransportEvent};
 use crate::streamable_http::{StreamableHttpClientTransport, TransportError};
@@ -49,6 +52,10 @@ pub const REINITIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long the `server/discover` probe waits for an answer before treating the server as legacy.
 pub const DISCOVER_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long each leg of a multi-round-trip exchange may take: a question to the client is a model
+/// call or a person reading something, not a request that was never expected to run long.
+pub const MULTI_ROUND_TRIP_LEG_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// The prefix every id this proxy mints carries.
 pub const OWN_ID_PREFIX: &str = "mcp-remote-";
@@ -324,8 +331,10 @@ struct Shared<C, S> {
     client: C,
     server: S,
     options: ProxyOptions,
-    /// The message transformer's held requests, by id.
-    transformer: Mutex<HashMap<String, Value>>,
+    /// The message transformer's held requests, by id, each with the token it was held under so
+    /// a stale exchange can release its own hold without freeing a request that reused the id.
+    transformer: Mutex<HashMap<String, (u64, Value)>>,
+    hold_seq: AtomicU64,
     /// Client requests that have gone to the server and still wait on an answer.
     pending_requests: Mutex<HashSet<String>>,
     initialize_request_id: Mutex<Option<Value>>,
@@ -352,6 +361,21 @@ struct Shared<C, S> {
     subscribed_resources: Mutex<Vec<String>>,
     /// The minimum log level the client asked for, which the modern era carries per request.
     requested_log_level: Mutex<Option<String>>,
+    own_request_seq: AtomicU64,
+    /// Requests this proxy issued to the remote on its own account, such as each retry leg.
+    pending_own: Mutex<HashMap<String, oneshot::Sender<Value>>>,
+    /// Requests this proxy put to the local client on the remote's behalf.
+    pending_client_requests: Mutex<HashMap<String, oneshot::Sender<Value>>>,
+    /// Client requests in flight against a modern server, with their transformer hold token, kept
+    /// so an `input_required` answer can be retried with what the client sent.
+    modern_originals: Mutex<HashMap<String, (Value, Option<u64>)>>,
+    /// The id of the retry leg the server is running for a client request, so a cancellation
+    /// naming the client's id can be re-addressed.
+    modern_retry_ids: Mutex<HashMap<String, String>>,
+    /// The exchange that currently speaks for a client request id. A token rather than a flag,
+    /// because the client may reuse an id while a stranded exchange still runs under it.
+    live_exchanges: Mutex<HashMap<String, u64>>,
+    exchange_seq: AtomicU64,
 }
 
 /// What the forwarder works through, in the order the client sent it.
@@ -365,8 +389,9 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
     /// `interceptRequest`: holds a request so its response can be paired with it.
     fn intercept_request(&self, message: &Value) {
         if is_request(message) {
+            let token = self.hold_seq.fetch_add(1, Ordering::SeqCst);
             self.lock_transformer()
-                .insert(id_key(&message["id"]), message.clone());
+                .insert(id_key(&message["id"]), (token, message.clone()));
         }
     }
 
@@ -375,7 +400,7 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
         if !is_response(&message) {
             return message;
         }
-        let Some(request) = self.lock_transformer().remove(&id_key(&message["id"])) else {
+        let Some((_, request)) = self.lock_transformer().remove(&id_key(&message["id"])) else {
             return message;
         };
         let modern = self.modern_era().is_some();
@@ -492,13 +517,44 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
 
     /// The part of `forwardInOrder` that answers or drops what a modern server has no method
     /// for. Returns whether the message was dealt with here.
-    async fn bridge_locally(&self, message: &Value) -> bool {
+    async fn bridge_locally(self: &Arc<Self>, message: &Value) -> bool {
         let Some((_, discover)) = self.modern_era() else {
             return false;
         };
         let Some(method) = message.get("method").and_then(Value::as_str) else {
             return false;
         };
+
+        // A cancellation names the id the client knows; mid-exchange the server is working under
+        // the id this proxy minted for the retry leg, so it has to be re-addressed
+        let cancelled = message
+            .get("params")
+            .and_then(|params| params.get("requestId"))
+            .map(id_key);
+        if method == "notifications/cancelled"
+            && let Some(cancelled) = cancelled
+            && lock(&self.live_exchanges).remove(&cancelled).is_some()
+        {
+            // Retired whether or not a leg is running yet: the exchange will still finish and
+            // must not answer a request the client has abandoned
+            self.lock_pending().remove(&cancelled);
+            let retry_id = lock(&self.modern_retry_ids).remove(&cancelled);
+            if let Some(retry_id) = retry_id {
+                debug_log(
+                    "Re-addressing a cancellation to the leg the server is actually running",
+                    &[json!({"retryId": retry_id})],
+                );
+                let mut readdressed = message.clone();
+                readdressed["params"]["requestId"] = Value::String(retry_id);
+                tokio::spawn(Arc::clone(self).send_to_server(readdressed));
+            } else {
+                debug_log(
+                    "Cancelling an exchange that has nothing in flight with the server yet",
+                    &[json!({"id": message["params"]["requestId"]})],
+                );
+            }
+            return true;
+        }
 
         if let Some(answer) = local_answer_for(method) {
             // Retired methods whose effect this proxy still owes the client
@@ -578,17 +634,233 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
         false
     }
 
+    /// `askRemote`: issues a request to the remote server on this proxy's own account and waits
+    /// for its answer. `build` is handed the minted id.
+    async fn ask_remote(
+        &self,
+        build: impl FnOnce(&str) -> Value,
+        timeout: Duration,
+    ) -> Result<Value, String> {
+        let id = format!(
+            "{OWN_ID_PREFIX}own-{}",
+            self.own_request_seq.fetch_add(1, Ordering::SeqCst) + 1
+        );
+        // The same barrier `send_to_server` waits on; without it a retry leg is POSTed onto the
+        // session that just went away
+        self.await_session_resumption().await;
+
+        let (settle, answer) = oneshot::channel();
+        lock(&self.pending_own).insert(id.clone(), settle);
+        if let Err(error) = self.server.send_message(build(&id)).await {
+            lock(&self.pending_own).remove(&id);
+            return Err(error.to_string());
+        }
+        match tokio::time::timeout(timeout, answer).await {
+            Ok(Ok(message)) => Ok(message),
+            Ok(Err(_)) => Err("the connection closed before this could be answered".to_owned()),
+            Err(_) => {
+                lock(&self.pending_own).remove(&id);
+                Err("timed out waiting for the remote server to answer".to_owned())
+            }
+        }
+    }
+
+    /// `askClient`: puts a request to the local client on the remote server's behalf. A 2025-era
+    /// client already answers sampling, elicitation and roots; that era had the server ask directly.
+    async fn ask_client(
+        &self,
+        method: &str,
+        params: Option<&Value>,
+        timeout: Duration,
+    ) -> Result<Value, String> {
+        let id = format!(
+            "{OWN_ID_PREFIX}input-{}",
+            self.own_request_seq.fetch_add(1, Ordering::SeqCst) + 1
+        );
+        let (settle, answer) = oneshot::channel();
+        lock(&self.pending_client_requests).insert(id.clone(), settle);
+        let mut request = json!({"jsonrpc": "2.0", "id": id, "method": method});
+        if let Some(params) = params {
+            request["params"] = params.clone();
+        }
+        if let Err(error) = self.client.send_message(request).await {
+            lock(&self.pending_client_requests).remove(&id);
+            return Err(error.to_string());
+        }
+        match tokio::time::timeout(timeout, answer).await {
+            Ok(Ok(message)) => Ok(message),
+            Ok(Err(_)) => Err("the connection closed before this could be answered".to_owned()),
+            Err(_) => {
+                lock(&self.pending_client_requests).remove(&id);
+                Err(format!("the local client did not answer {method}"))
+            }
+        }
+    }
+
+    /// `answerClient`: answers the client's own request through the response transformer, so the
+    /// `--ignore-tool` filter applies to an answer that arrived across a round trip. Only the
+    /// exchange still holding the id may answer it.
+    async fn answer_client(&self, message: Value, exchange: Option<u64>, token: Option<u64>) {
+        if has_id(&message) {
+            let key = id_key(&message["id"]);
+            if let Some(exchange) = exchange
+                && lock(&self.live_exchanges).get(&key) != Some(&exchange)
+            {
+                debug_log(
+                    "Dropping an answer from an exchange that no longer speaks for this request",
+                    &[json!({"id": message["id"], "exchange": exchange})],
+                );
+                // Releases this exchange's own hold, not that of a request that reused the id
+                self.release_hold(&message["id"], token);
+                return;
+            }
+            self.lock_pending().remove(&key);
+            lock(&self.modern_retry_ids).remove(&key);
+            lock(&self.live_exchanges).remove(&key);
+        }
+        let message = self.intercept_response(message);
+        self.send_to_client(message).await;
+    }
+
+    /// `driveInputRequired`: puts each question a modern server embedded in an `input_required`
+    /// result to the client, retries the original request with the answers, and answers the
+    /// client once the server completes.
+    async fn drive_input_required(
+        self: Arc<Self>,
+        original: &Value,
+        first_result: Value,
+        version: &str,
+        exchange: u64,
+        token: Option<u64>,
+    ) -> Result<(), String> {
+        let mut pending = first_result;
+        for _ in 0..MAX_INPUT_REQUIRED_ROUNDS {
+            let requests = pending
+                .get("inputRequests")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            let request_state = pending.get("requestState").filter(|state| !state.is_null());
+
+            // A retry byte-identical to the request that produced this would just run the tool
+            // again, with every side effect that implies
+            if requests.is_empty() && request_state.is_none() {
+                return Err("the remote server asked for more input but named none, and carried no state to continue from".to_owned());
+            }
+            if requests.len() > MAX_INPUT_REQUESTS_PER_ROUND {
+                return Err(format!(
+                    "the remote server embedded {} questions in one answer, which is more than this proxy will put to a client at once",
+                    requests.len()
+                ));
+            }
+
+            let mut responses = serde_json::Map::new();
+            for (key, request) in &requests {
+                let method = request
+                    .get("method")
+                    .and_then(Value::as_str)
+                    .unwrap_or("undefined");
+                let params = request.get("params");
+                if !can_fulfil_input_request(method, params) {
+                    return Err(format!(
+                        "the remote server asked for {method}, which this proxy cannot put to a 2025-era client"
+                    ));
+                }
+                // The client said in its handshake what it can do; asking anyway earns a -32601
+                let capabilities = lock(&self.client_identity).capabilities.clone();
+                if !client_declared_capability_for(method, capabilities.as_ref()) {
+                    return Err(format!(
+                        "the remote server asked for {method}, which this client did not declare it supports"
+                    ));
+                }
+                let answer = self
+                    .ask_client(method, params, MULTI_ROUND_TRIP_LEG_TIMEOUT)
+                    .await?;
+                if let Some(error) = answer.get("error") {
+                    return Err(format!("the local client refused {method}: {error}"));
+                }
+                responses.insert(
+                    key.clone(),
+                    answer.get("result").cloned().unwrap_or(Value::Null),
+                );
+            }
+
+            let retry_params = input_required_retry_params(
+                original.get("params"),
+                &responses,
+                request_state.and_then(Value::as_str),
+            );
+            let identity = lock(&self.client_identity).clone();
+            let level = lock(&self.requested_log_level).clone();
+            let reply = self
+                .ask_remote(
+                    |id| {
+                        // Recorded so a cancellation naming the client's id can be re-addressed
+                        // to the leg the server is actually running
+                        lock(&self.modern_retry_ids).insert(id_key(&original["id"]), id.to_owned());
+                        let mut retry = original.clone();
+                        retry["id"] = Value::String(id.to_owned());
+                        retry["params"] = retry_params;
+                        stamp_log_level(
+                            stamp_modern_meta(&retry, &identity, version),
+                            level.as_deref(),
+                        )
+                    },
+                    MULTI_ROUND_TRIP_LEG_TIMEOUT,
+                )
+                .await?;
+
+            if let Some(error) = reply.get("error") {
+                self.answer_client(
+                    json!({"jsonrpc": "2.0", "id": original["id"], "error": error}),
+                    Some(exchange),
+                    token,
+                )
+                .await;
+                return Ok(());
+            }
+            let result = reply.get("result").cloned().unwrap_or(Value::Null);
+            if !is_input_required_result(&result) {
+                let answer = match translate_modern_result(result) {
+                    TranslatedResult::Result(result) => {
+                        json!({"jsonrpc": "2.0", "id": original["id"], "result": result})
+                    }
+                    TranslatedResult::Error { code, message } => json!({
+                        "jsonrpc": "2.0",
+                        "id": original["id"],
+                        "error": {"code": code, "message": message},
+                    }),
+                };
+                self.answer_client(answer, Some(exchange), token).await;
+                return Ok(());
+            }
+            pending = result;
+        }
+        Err(format!(
+            "the remote server asked for more input {MAX_INPUT_REQUIRED_ROUNDS} times without answering"
+        ))
+    }
+
     /// Releases the held request for an answer that did not come from the server.
     fn release(&self, id: &Value, only: Option<&Value>) {
         let mut transformer = self.lock_transformer();
         let key = id_key(id);
-        if only.is_some_and(|only| transformer.get(&key) != Some(only)) {
+        if only.is_some_and(|only| transformer.get(&key).map(|(_, held)| held) != Some(only)) {
             return;
         }
         transformer.remove(&key);
     }
 
-    fn lock_transformer(&self) -> std::sync::MutexGuard<'_, HashMap<String, Value>> {
+    /// Releases the hold taken under `token`, and nobody else's.
+    fn release_hold(&self, id: &Value, token: Option<u64>) {
+        let mut transformer = self.lock_transformer();
+        let key = id_key(id);
+        if token.is_some() && transformer.get(&key).map(|(held, _)| *held) == token {
+            transformer.remove(&key);
+        }
+    }
+
+    fn lock_transformer(&self) -> std::sync::MutexGuard<'_, HashMap<String, (u64, Value)>> {
         self.transformer
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -635,6 +907,15 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
             // Stamped here rather than on arrival, which can be before the probe has said which
             // era to speak
             let outgoing = self.written_for_era(&message);
+            // Kept so that a server answering `input_required` can be retried with what the client
+            // sent. The id is the client's to reuse, and doing so ends whatever ran under it.
+            if awaits_answer && self.modern_era().is_some() {
+                let key = id_key(&message["id"]);
+                lock(&self.live_exchanges).remove(&key);
+                lock(&self.modern_retry_ids).remove(&key);
+                let token = self.lock_transformer().get(&key).map(|(token, _)| *token);
+                lock(&self.modern_originals).insert(key, (message.clone(), token));
+            }
             let error = match self.server.send_message(outgoing).await {
                 Ok(()) => {
                     if message["method"] == "initialize" {
@@ -645,7 +926,11 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
                 Err(error) => error,
             };
             if awaits_answer {
-                self.lock_pending().remove(&id_key(&message["id"]));
+                let key = id_key(&message["id"]);
+                self.lock_pending().remove(&key);
+                // Left behind, a later stray frame for this id would start a whole exchange for a
+                // request the client has already been told failed
+                lock(&self.modern_originals).remove(&key);
             }
 
             // A token the server refused straight after issuing it is a dead credential the SDK
@@ -775,6 +1060,11 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
         for key in ids {
             let id: Value = serde_json::from_str(&key).unwrap_or(Value::Null);
             self.release(&id, None);
+            // Answered now, so there is nothing left to retry an exchange for, and an exchange
+            // still running loses its claim on the id
+            lock(&self.modern_originals).remove(&key);
+            lock(&self.modern_retry_ids).remove(&key);
+            lock(&self.live_exchanges).remove(&key);
             self.send_to_client(json!({
                 "jsonrpc": "2.0",
                 "id": id,
@@ -907,7 +1197,9 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
     /// Settles every request this proxy made on its own account with an error.
     fn fail_own_pending_requests(&self, reason: &str) {
         let mut pending: Vec<(String, oneshot::Sender<Value>)> =
-            lock(&self.pending_discover).drain().collect();
+            lock(&self.pending_own).drain().collect();
+        pending.extend(lock(&self.pending_client_requests).drain());
+        pending.extend(lock(&self.pending_discover).drain());
         pending.extend(lock(&self.pending_reinit).drain());
         for (id, settle) in pending {
             let _ = settle.send(json!({
@@ -952,6 +1244,10 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
                     &[],
                 );
                 self.send_to_client(reserved_id_error(&id)).await;
+            } else if let Some(settle) =
+                lock(&self.pending_client_requests).remove(id.as_str().unwrap_or_default())
+            {
+                let _ = settle.send(message);
             } else {
                 debug_log(
                     "Discarding a late answer to a question this proxy had given up on",
@@ -1042,7 +1338,7 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
         let _ = forward.send(Forward::Message(message));
     }
 
-    async fn on_server_message(&self, message: Value) {
+    async fn on_server_message(self: &Arc<Self>, message: Value) {
         let id = message.get("id").cloned().unwrap_or(Value::Null);
         if is_own_id(&id) {
             if message.get("method").is_some() {
@@ -1062,8 +1358,9 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
             if lock(&self.pending_pings).remove(key) {
                 return;
             }
-            let settle = lock(&self.pending_discover)
+            let settle = lock(&self.pending_own)
                 .remove(key)
+                .or_else(|| lock(&self.pending_discover).remove(key))
                 .or_else(|| lock(&self.pending_reinit).remove(key));
             if let Some(settle) = settle {
                 let _ = settle.send(message);
@@ -1110,8 +1407,65 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
             return;
         }
 
+        // A modern server asking for input rather than answering. The client is left waiting on
+        // the request it sent while the questions are put to it, and is answered once.
+        if let Some((version, _)) = &modern
+            && !id.is_null()
+            && message.get("result").is_some_and(is_input_required_result)
+        {
+            let key = id_key(&id);
+            let Some((original, token)) = lock(&self.modern_originals).remove(&key) else {
+                // Already answered, by a dropped session or a cancellation; translating it would
+                // send the client a second response for the same id
+                debug_log(
+                    "Discarding a request for more input on an exchange that is already over",
+                    &[json!({"id": id})],
+                );
+                return;
+            };
+            // Left in `pending_requests`: the exchange is still owed an answer, and a dropped
+            // session has to be able to fail it
+            log(
+                "[Remote→Local]",
+                &[Value::String(format!(
+                    "{} (asking for more input)",
+                    id.as_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| id.to_string())
+                ))],
+            );
+            let exchange = self.exchange_seq.fetch_add(1, Ordering::SeqCst) + 1;
+            lock(&self.live_exchanges).insert(key, exchange);
+            let shared = Arc::clone(self);
+            let first_result = message["result"].clone();
+            let version = version.clone();
+            tokio::spawn(async move {
+                let outcome = Arc::clone(&shared)
+                    .drive_input_required(&original, first_result, &version, exchange, token)
+                    .await;
+                if let Err(error) = outcome {
+                    on_server_error(&error);
+                    shared
+                        .answer_client(
+                            json!({
+                                "jsonrpc": "2.0",
+                                "id": original["id"],
+                                "error": {"code": -32001, "message": format!("mcp-remote: {error}")},
+                            }),
+                            Some(exchange),
+                            token,
+                        )
+                        .await;
+                }
+            });
+            return;
+        }
+
         if !id.is_null() {
-            self.lock_pending().remove(&id_key(&id));
+            let key = id_key(&id);
+            self.lock_pending().remove(&key);
+            lock(&self.modern_originals).remove(&key);
+            lock(&self.modern_retry_ids).remove(&key);
         }
 
         let message = self.intercept_response(message);
@@ -1198,6 +1552,7 @@ pub async fn mcp_proxy<C: ProxyTransport, S: ProxyTransport>(
         server,
         options,
         transformer: Mutex::new(HashMap::new()),
+        hold_seq: AtomicU64::new(0),
         pending_requests: Mutex::new(HashSet::new()),
         initialize_request_id: Mutex::new(None),
         last_initialize: Mutex::new(None),
@@ -1215,6 +1570,13 @@ pub async fn mcp_proxy<C: ProxyTransport, S: ProxyTransport>(
         pending_discover: Mutex::new(HashMap::new()),
         subscribed_resources: Mutex::new(Vec::new()),
         requested_log_level: Mutex::new(None),
+        own_request_seq: AtomicU64::new(0),
+        pending_own: Mutex::new(HashMap::new()),
+        pending_client_requests: Mutex::new(HashMap::new()),
+        modern_originals: Mutex::new(HashMap::new()),
+        modern_retry_ids: Mutex::new(HashMap::new()),
+        live_exchanges: Mutex::new(HashMap::new()),
+        exchange_seq: AtomicU64::new(0),
     });
     let reconnect_slot = shared.options.stream_reconnect.clone();
     if let Some(slot) = &reconnect_slot {
