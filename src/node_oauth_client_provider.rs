@@ -877,6 +877,23 @@ impl NodeOAuthClientProvider {
         self.state.clone()
     }
 
+    pub fn use_authorization_state(&mut self, state: &str) {
+        use_authorization_state(state, &mut self.incoming_state);
+    }
+
+    pub fn flow_state(&self) -> &str {
+        flow_state(self.incoming_state.as_deref(), &self.state)
+    }
+
+    pub fn owns_pending_flow(&self, authorization_url: &Url) -> bool {
+        owns_pending_flow(
+            authorization_url,
+            self.pending_flow
+                .as_ref()
+                .and_then(|pending| pending.challenge.as_deref()),
+        )
+    }
+
     pub fn set_callback_port(&mut self, port: u16) {
         self.options.callback_port = port;
     }
