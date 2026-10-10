@@ -89,14 +89,44 @@ pub fn launch_helper(command: &str, args: &[String]) -> bool {
 }
 
 pub fn bundled_opener(url: &str, os: &str) -> BrowserFallback {
+    if os == "windows" {
+        return powershell_start(url);
+    }
     let (command, args): (&str, Vec<&str>) = match os {
         "macos" => ("open", vec![url]),
-        "windows" => ("cmd", vec!["/c", "start", "\"\"", url]),
         _ => ("xdg-open", vec![url]),
     };
     BrowserFallback {
         command: command.to_string(),
         args: args.iter().map(|argument| argument.to_string()).collect(),
+    }
+}
+
+/// What the `open` package runs on Windows: PowerShell's `Start`, handed over as an encoded
+/// command so that `&` and the rest of a query string reach it intact.
+fn powershell_start(url: &str) -> BrowserFallback {
+    use base64::Engine;
+
+    let system_root = std::env::var("SYSTEMROOT")
+        .or_else(|_| std::env::var("windir"))
+        .unwrap_or_else(|_| r"C:\Windows".to_string());
+    let command: Vec<u8> = format!("Start \"{url}\"")
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    BrowserFallback {
+        command: format!(r"{system_root}\System32\WindowsPowerShell\v1.0\powershell.exe"),
+        args: [
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-EncodedCommand",
+        ]
+        .iter()
+        .map(|argument| argument.to_string())
+        .chain([base64::engine::general_purpose::STANDARD.encode(command)])
+        .collect(),
     }
 }
 

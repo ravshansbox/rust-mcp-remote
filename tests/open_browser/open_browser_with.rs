@@ -25,18 +25,32 @@ fn uses_open_on_macos() {
 }
 
 #[test]
-fn uses_cmd_start_on_windows() {
+fn starts_the_url_through_an_encoded_powershell_command_on_windows() {
+    use base64::Engine;
+
+    let opener = bundled_opener(URL, "windows");
+    let command: Vec<u8> = format!("Start \"{URL}\"")
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+
+    assert!(
+        opener
+            .command
+            .ends_with(r"\System32\WindowsPowerShell\v1.0\powershell.exe"),
+        "{}",
+        opener.command
+    );
     assert_eq!(
-        bundled_opener(URL, "windows"),
-        BrowserFallback {
-            command: "cmd".to_string(),
-            args: vec![
-                "/c".to_string(),
-                "start".to_string(),
-                "\"\"".to_string(),
-                URL.to_string()
-            ],
-        }
+        opener.args,
+        [
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-EncodedCommand",
+            &base64::engine::general_purpose::STANDARD.encode(command),
+        ]
     );
 }
 
