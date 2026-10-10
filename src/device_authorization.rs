@@ -1,6 +1,7 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use serde_json::{Value, json};
+use url::Url;
 
 use crate::logging::{debug_log, log};
 
@@ -230,6 +231,92 @@ pub fn poll_for_tokens(
     }
 
     Err("The device code expired before it was approved".to_string())
+}
+
+pub fn authorize_with_device_code(
+    metadata: &Value,
+    client_information: &Value,
+    scope: Option<&str>,
+    resource: Option<&Url>,
+    now_ms: impl FnMut() -> f64,
+    sleep: impl FnMut(f64),
+    mut post: impl FnMut(&str, &FormRequest) -> Result<FormResponse, String>,
+) -> Result<Value, String> {
+    let Some(device_authorization_endpoint) = metadata
+        .get("device_authorization_endpoint")
+        .and_then(Value::as_str)
+    else {
+        return Err(
+            "The authorization server does not offer a device authorization endpoint".to_string(),
+        );
+    };
+    let Some(token_endpoint) = metadata
+        .get("token_endpoint")
+        .and_then(Value::as_str)
+        .filter(|endpoint| !endpoint.is_empty())
+    else {
+        return Err("The authorization server metadata has no token endpoint".to_string());
+    };
+
+    let supported_methods: Vec<&str> = metadata
+        .get("token_endpoint_auth_methods_supported")
+        .and_then(Value::as_array)
+        .map(|methods| methods.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let auth_method = select_client_auth_method(client_information, &supported_methods);
+    let client_id = client_information
+        .get("client_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let client_secret = client_information
+        .get("client_secret")
+        .and_then(Value::as_str);
+    let resource = resource.map(Url::as_str);
+
+    let request =
+        build_device_authorization_request(auth_method, client_id, client_secret, scope, resource)?;
+    debug_log(
+        "Requesting device authorization",
+        &[json!({ "endpoint": device_authorization_endpoint, "scope": scope })],
+    );
+    let response = post(device_authorization_endpoint, &request)?;
+    if !(200..300).contains(&response.status) {
+        return Err(format!(
+            "Device authorization request failed (HTTP {}): {}",
+            response.status,
+            error_detail(Some(&response.body), "")
+        ));
+    }
+    let body = serde_json::from_str::<Value>(&response.body).unwrap_or(Value::Null);
+    let authorization = parse_device_authorization_response(&body)?;
+    debug_log(
+        "Device authorization issued",
+        &[json!({
+            "verification_uri": authorization.verification_uri,
+            "expires_in": authorization.expires_in,
+            "interval": authorization.interval,
+        })],
+    );
+
+    for line in verification_prompt_lines(&authorization) {
+        log(&line, &[]);
+    }
+
+    let token_request = build_device_token_request(
+        auth_method,
+        client_id,
+        client_secret,
+        &authorization.device_code,
+        resource,
+    )?;
+    poll_for_tokens(
+        token_endpoint,
+        &authorization,
+        &token_request,
+        now_ms,
+        sleep,
+        post,
+    )
 }
 
 pub fn supports_device_authorization(metadata: Option<&Value>) -> bool {
