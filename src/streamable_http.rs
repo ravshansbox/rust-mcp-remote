@@ -58,13 +58,7 @@ pub fn fetch_with_headers(fetch: Option<FetchFn>, headers: &[(String, String)]) 
         return fetch;
     }
     let headers = headers.to_vec();
-    let fetch = fetch.unwrap_or_else(|| {
-        let client = redirect_following_client();
-        Arc::new(move |request| {
-            let client = client.clone();
-            Box::pin(async move { client.execute(request).await.map_err(fetch_error) })
-        })
-    });
+    let fetch = fetch.unwrap_or_else(|| fetch_through(redirect_following_client()));
     Some(Arc::new(move |mut request: Request| {
         for (name, value) in &headers {
             if let (Ok(name), Ok(value)) = (
@@ -159,10 +153,106 @@ impl From<AuthError> for TransportError {
 
 impl std::error::Error for TransportError {}
 
+/// What the command line sets for every connection to the remote side: the undici dispatcher
+/// options TS installs with `setGlobalDispatcher`. A timeout of zero is disabled.
+#[derive(Debug, Clone, Default)]
+pub struct HttpSettings {
+    pub connect_timeout: Option<Duration>,
+    pub body_timeout: Option<Duration>,
+    pub headers_timeout: Option<Duration>,
+    pub force_ipv4: bool,
+}
+
+static HTTP_SETTINGS: std::sync::OnceLock<HttpSettings> = std::sync::OnceLock::new();
+
+/// Applies `settings` to every HTTP client built from now on. Call once, before any request.
+pub fn configure_http(settings: HttpSettings) {
+    let _ = HTTP_SETTINGS.set(settings);
+}
+
+fn http_settings() -> &'static HttpSettings {
+    HTTP_SETTINGS.get_or_init(HttpSettings::default)
+}
+
+fn enabled(timeout: Option<Duration>) -> Option<Duration> {
+    timeout.filter(|timeout| !timeout.is_zero())
+}
+
+/// Resolves names to their IPv4 addresses only, as undici's `connect: { family: 4 }` does.
+struct Ipv4Only;
+
+impl reqwest::dns::Resolve for Ipv4Only {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        Box::pin(async move {
+            let addresses: Vec<std::net::SocketAddr> = tokio::net::lookup_host((name.as_str(), 0))
+                .await?
+                .filter(std::net::SocketAddr::is_ipv4)
+                .collect();
+            Ok(Box::new(addresses.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
+}
+
+/// A client builder carrying the command line's network settings.
+pub fn client_builder() -> reqwest::ClientBuilder {
+    let settings = http_settings();
+    let mut builder = reqwest::Client::builder();
+    if let Some(timeout) = enabled(settings.connect_timeout) {
+        builder = builder.connect_timeout(timeout);
+    }
+    if let Some(timeout) = enabled(settings.body_timeout) {
+        builder = builder.read_timeout(timeout);
+    }
+    if settings.force_ipv4 {
+        builder = builder.dns_resolver(Arc::new(Ipv4Only));
+    }
+    builder
+}
+
+/// Why a request produced no response.
+#[derive(Debug)]
+pub enum SendFailure {
+    Request(reqwest::Error),
+    /// undici's UND_ERR_HEADERS_TIMEOUT.
+    HeadersTimeout,
+}
+
+impl std::fmt::Display for SendFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SendFailure::Request(error) => error.fmt(formatter),
+            SendFailure::HeadersTimeout => formatter.write_str("Headers Timeout Error"),
+        }
+    }
+}
+
+impl SendFailure {
+    /// The message with every underlying cause, as `fetch_error` gives it.
+    pub fn detailed(self) -> String {
+        match self {
+            SendFailure::Request(error) => fetch_error(error),
+            other => other.to_string(),
+        }
+    }
+}
+
+/// Waits for the response headers no longer than `--headers-timeout` allows.
+pub async fn within_headers_timeout(
+    response: impl Future<Output = reqwest::Result<Response>>,
+) -> Result<Response, SendFailure> {
+    match enabled(http_settings().headers_timeout) {
+        Some(timeout) => match tokio::time::timeout(timeout, response).await {
+            Ok(response) => response.map_err(SendFailure::Request),
+            Err(_) => Err(SendFailure::HeadersTimeout),
+        },
+        None => response.await.map_err(SendFailure::Request),
+    }
+}
+
 /// A client that leaves every redirect to the transport, which follows only
 /// those that stay within the origin (the SDK's default 'same-origin' policy).
 pub fn default_client() -> reqwest::Client {
-    reqwest::Client::builder()
+    client_builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap_or_default()
@@ -172,14 +262,23 @@ pub fn default_client() -> reqwest::Client {
 /// client loads the platform's root certificates.
 pub fn redirect_following_client() -> reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-    CLIENT.get_or_init(reqwest::Client::new).clone()
+    CLIENT
+        .get_or_init(|| client_builder().build().unwrap_or_default())
+        .clone()
 }
 
 pub fn default_fetch() -> FetchFn {
-    let client = default_client();
+    fetch_through(default_client())
+}
+
+fn fetch_through(client: reqwest::Client) -> FetchFn {
     Arc::new(move |request| {
         let client = client.clone();
-        Box::pin(async move { client.execute(request).await.map_err(fetch_error) })
+        Box::pin(async move {
+            within_headers_timeout(client.execute(request))
+                .await
+                .map_err(SendFailure::detailed)
+        })
     })
 }
 

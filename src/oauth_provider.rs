@@ -367,11 +367,11 @@ impl OAuthProvider {
         }
 
         let response = async {
-            let response = default_client()
+            let request = default_client()
                 .get(authorization_url.as_str())
                 .header("Accept", "application/json")
-                .timeout(Duration::from_secs(5))
-                .send()
+                .timeout(Duration::from_secs(5));
+            let response = crate::streamable_http::within_headers_timeout(request.send())
                 .await
                 .map_err(|error| error.to_string())?;
             let status = response.status().as_u16();

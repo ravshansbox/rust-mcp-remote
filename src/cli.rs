@@ -165,6 +165,18 @@ pub async fn prepare_sign_in(args: &CommandLineArgs, client_name: &str) -> Resul
     })
 }
 
+/// `setGlobalDispatcher`: the network options of the command line, for every request after this.
+pub fn configure_network(args: &CommandLineArgs) {
+    let milliseconds = |value: Option<u64>| value.map(std::time::Duration::from_millis);
+    let options = &args.network_options;
+    crate::streamable_http::configure_http(crate::streamable_http::HttpSettings {
+        connect_timeout: milliseconds(options.connect_timeout_ms),
+        body_timeout: milliseconds(options.body_timeout_ms),
+        headers_timeout: milliseconds(options.headers_timeout_ms),
+        force_ipv4: options.force_ipv4,
+    });
+}
+
 /// `setupSignalHandlers`: on Ctrl+C, or when stdin reaches its end, logs the shutdown, runs
 /// `cleanup` and exits with 0. Only for a process that does not read stdin itself; the proxy
 /// learns of both from its stdio transport closing.
