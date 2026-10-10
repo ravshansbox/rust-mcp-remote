@@ -133,3 +133,37 @@ async fn proxies_stdio_to_a_streamable_http_server_end_to_end() {
         .unwrap();
     assert_eq!(status.code(), Some(0));
 }
+
+#[tokio::test]
+#[ignore = "needs network access to mcp.deepwiki.com"]
+async fn connects_to_a_server_that_stalls_get_over_http2_within_eight_seconds() {
+    use std::process::Stdio;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_rust-mcp-remote"))
+        .args(["https://mcp.deepwiki.com/mcp", "--silent"])
+        .env(
+            "MCP_REMOTE_CONFIG_DIR",
+            std::env::temp_dir().join("rust-mcp-remote-main-cli-deepwiki"),
+        )
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
+
+    stdin
+        .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"t\",\"version\":\"1\"}}}\n")
+        .await
+        .unwrap();
+    let line = tokio::time::timeout(std::time::Duration::from_secs(8), stdout.next_line())
+        .await
+        .expect("timed out waiting for DeepWiki")
+        .unwrap()
+        .expect("proxy closed stdout");
+    let answer: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(answer["result"]["serverInfo"]["name"], "DeepWiki");
+}
