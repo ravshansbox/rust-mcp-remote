@@ -1127,15 +1127,14 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
     }
 
     async fn send_to_server(self: Arc<Self>, message: Value, mut ticket: Option<u64>) {
-        // The stream came back on a session that has not been handshaked yet; sending now would
-        // race the recovery onto the session the server dropped. The recovery's own messages go
-        // straight to the transport, so it never waits on itself.
-        self.await_session_resumption().await;
-
         let awaits_answer = is_request(&message);
         let mut already_reauthorized = false;
         let mut already_discarded_token = false;
         loop {
+            // The stream came back on a session that has not been handshaked yet; sending now
+            // would race the recovery onto the session the server dropped. The recovery's own
+            // messages go straight to the transport, so it never waits on itself.
+            self.await_session_resumption().await;
             if awaits_answer {
                 self.lock_pending().insert(id_key(&message["id"]));
             }
