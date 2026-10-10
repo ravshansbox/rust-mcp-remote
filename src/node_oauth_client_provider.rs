@@ -12,7 +12,8 @@ use url::Url;
 use crate::device_authorization::DEVICE_CODE_GRANT_TYPE;
 use crate::logging::{debug_log, log};
 use crate::mcp_auth_config::{
-    delete_config_file, read_config_lease, read_json_file, read_text_file, write_text_file,
+    delete_config_file, read_config_lease, read_json_file, read_text_file, write_json_file,
+    write_text_file,
 };
 use crate::utils::{MCP_REMOTE_VERSION, build_redirect_url};
 
@@ -993,6 +994,43 @@ impl NodeOAuthClientProvider {
                 debug_log("Code verifier invalidated", &[]);
             }
         }
+    }
+
+    pub fn save_client_information(&mut self, client_information: &Value) -> std::io::Result<()> {
+        let client_id = client_information.get("client_id").and_then(Value::as_str);
+        if self.client_metadata_url.is_some() && client_id == self.client_metadata_url.as_deref() {
+            debug_log(
+                "Not caching a client id that came from a client metadata document",
+                &[],
+            );
+            self.client_registration_source =
+                Some(ClientRegistrationSource::ClientIdMetadataDocument);
+            return Ok(());
+        }
+
+        let is_restamp_of_cached_client = self.client_registration_source
+            == Some(ClientRegistrationSource::CachedDynamic)
+            && client_id.is_some()
+            && client_id
+                == self
+                    .client_info
+                    .as_ref()
+                    .and_then(|client_info| client_info.get("client_id"))
+                    .and_then(Value::as_str);
+
+        debug_log(
+            "Saving client info",
+            &[json!({ "client_id": client_id, "restamp": is_restamp_of_cached_client })],
+        );
+        self.client_info = Some(client_information.clone());
+        if !is_restamp_of_cached_client {
+            self.client_registration_source = Some(ClientRegistrationSource::FreshDynamic);
+        }
+        write_json_file(
+            &self.server_url_hash,
+            "client_info.json",
+            client_information,
+        )
     }
 
     pub fn set_callback_port(&mut self, port: u16) {
