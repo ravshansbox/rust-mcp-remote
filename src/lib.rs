@@ -2,6 +2,7 @@ pub mod auth;
 pub mod authorization_server_metadata;
 pub mod callback_server;
 pub mod client_credentials;
+pub mod connect;
 pub mod cookie_jar;
 pub mod coordination;
 pub mod device_authorization;
