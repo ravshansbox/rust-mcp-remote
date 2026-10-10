@@ -371,6 +371,9 @@ struct Shared<C, S> {
     reinitialize_flight: SingleFlight,
     /// `sessionResumption`: true while the session is re-handshaked after the stream came back.
     resuming: watch::Sender<bool>,
+    /// The next ticket to hand a forwarded message, and the ticket whose send may start now.
+    next_ticket: AtomicU64,
+    send_turn: watch::Sender<u64>,
     /// Set once the probe has run. Until then nothing is known about the server's era.
     era: Mutex<Option<EraVerdict>>,
     /// Set when the probe is queued, so a client re-sending `initialize` does not start a second.
@@ -546,7 +549,7 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
                     "Treating the remote server as legacy",
                     &[json!({"reason": reason})],
                 );
-                tokio::spawn(self.send_to_server(initialize));
+                self.spawn_send(initialize);
             }
         }
     }
@@ -582,7 +585,7 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
                 );
                 let mut readdressed = message.clone();
                 readdressed["params"]["requestId"] = Value::String(retry_id);
-                tokio::spawn(Arc::clone(self).send_to_server(readdressed));
+                self.spawn_send(readdressed);
             } else {
                 debug_log(
                     "Cancelling an exchange that has nothing in flight with the server yet",
@@ -1116,7 +1119,14 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
         .await;
     }
 
-    async fn send_to_server(self: Arc<Self>, message: Value) {
+    /// Sends `message` on its own task, starting the send only after every message handed over
+    /// before it has started its own, so the server is asked in the order the client asked.
+    fn spawn_send(self: &Arc<Self>, message: Value) -> tokio::task::JoinHandle<()> {
+        let ticket = self.next_ticket.fetch_add(1, Ordering::SeqCst);
+        tokio::spawn(Arc::clone(self).send_to_server(message, Some(ticket)))
+    }
+
+    async fn send_to_server(self: Arc<Self>, message: Value, mut ticket: Option<u64>) {
         // The stream came back on a session that has not been handshaked yet; sending now would
         // race the recovery onto the session the server dropped. The recovery's own messages go
         // straight to the transport, so it never waits on itself.
@@ -1141,7 +1151,29 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
                 let token = self.lock_transformer().get(&key).map(|(token, _)| *token);
                 lock(&self.modern_originals).insert(key, (message.clone(), token));
             }
-            let error = match self.server.send_message(outgoing).await {
+            let mut sending = self.server.send_message(outgoing);
+            let started = match ticket.take() {
+                Some(ticket) => {
+                    let _ = self
+                        .send_turn
+                        .subscribe()
+                        .wait_for(|turn| *turn >= ticket)
+                        .await;
+                    let started = std::future::poll_fn(|context| {
+                        std::task::Poll::Ready(sending.as_mut().poll(context))
+                    })
+                    .await;
+                    self.send_turn
+                        .send_modify(|turn| *turn = (*turn).max(ticket + 1));
+                    started
+                }
+                None => std::task::Poll::Pending,
+            };
+            let sent = match started {
+                std::task::Poll::Ready(sent) => sent,
+                std::task::Poll::Pending => sending.await,
+            };
+            let error = match sent {
                 Ok(()) => {
                     if message["method"] == "initialize" {
                         self.schedule_initialize_timeout(message);
@@ -1758,7 +1790,7 @@ async fn forward_in_order<C: ProxyTransport, S: ProxyTransport>(
         {
             let _ = tokio::time::timeout_at(*deadline, barrier).await;
         }
-        let task = tokio::spawn(Arc::clone(&shared).send_to_server(message.clone()));
+        let task = shared.spawn_send(message.clone());
         if message["method"] == "notifications/initialized" && message.get("id").is_none() {
             let deadline = tokio::time::Instant::now() + shared.options.lifecycle_barrier_timeout;
             initialized_delivered = Some((task, deadline));
@@ -1790,6 +1822,8 @@ pub async fn mcp_proxy<C: ProxyTransport, S: ProxyTransport>(
         reauthorize_flight: SingleFlight::default(),
         reinitialize_flight: SingleFlight::default(),
         resuming: watch::Sender::new(false),
+        next_ticket: AtomicU64::new(0),
+        send_turn: watch::Sender::new(0),
         era: Mutex::new(None),
         negotiation_started: std::sync::atomic::AtomicBool::new(false),
         client_identity: Mutex::new(LegacyClientIdentity::default()),
