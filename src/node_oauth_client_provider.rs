@@ -1232,7 +1232,7 @@ impl NodeOAuthClientProvider {
         effective_scope(&self.scope_sources(), self.has_explicit_token_endpoint())
     }
 
-    fn stored_tokens(&self) -> Option<Value> {
+    pub fn stored_tokens(&self) -> Option<Value> {
         read_json_file::<Value>(&self.server_url_hash, "tokens.json").filter(|stored| {
             stored.get("access_token").is_some_and(Value::is_string)
                 && stored.get("token_type").is_some_and(Value::is_string)

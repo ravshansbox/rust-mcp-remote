@@ -443,3 +443,20 @@ fn set_pair(pairs: &mut Vec<(String, String)>, name: &str, value: &str, ignore_c
         None => pairs.push((name.to_string(), value.to_string())),
     }
 }
+
+/// POSTs a form the way the TypeScript `fetch(endpoint, { method: 'POST', headers, body })` does.
+pub async fn post_form(endpoint: &str, request: &FormRequest) -> Result<FormResponse, String> {
+    let body = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(&request.params)
+        .finish();
+    let mut builder = crate::streamable_http::redirect_following_client()
+        .post(endpoint)
+        .body(body);
+    for (name, value) in &request.headers {
+        builder = builder.header(name, value);
+    }
+    let response = builder.send().await.map_err(|error| error.to_string())?;
+    let status = response.status().as_u16();
+    let body = response.text().await.map_err(|error| error.to_string())?;
+    Ok(FormResponse { status, body })
+}

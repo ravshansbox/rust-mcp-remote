@@ -90,6 +90,13 @@ pub fn default_client() -> reqwest::Client {
         .unwrap_or_default()
 }
 
+/// A client that follows redirects, like Node's global fetch. Shared, because building a
+/// client loads the platform's root certificates.
+pub fn redirect_following_client() -> reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(reqwest::Client::new).clone()
+}
+
 pub fn default_fetch() -> FetchFn {
     let client = default_client();
     Arc::new(move |request| {

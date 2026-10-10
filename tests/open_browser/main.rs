@@ -7,3 +7,4 @@ mod launch_environment_details;
 mod launch_helper;
 mod linux_fallbacks;
 mod open_browser_with;
+mod sanitize_url;

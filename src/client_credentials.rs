@@ -1,7 +1,10 @@
 use serde_json::Value;
 
-use crate::device_authorization::{FormRequest, apply_client_authentication, form_headers};
-use crate::logging::log_to;
+use crate::auth::parse_tokens;
+use crate::device_authorization::{
+    FormRequest, apply_client_authentication, form_headers, post_form, select_client_auth_method,
+};
+use crate::logging::{debug_log, log, log_to};
 
 pub fn check_token_endpoint_to(
     console: &mut impl std::io::Write,
@@ -83,4 +86,56 @@ pub fn client_credentials_request_debug_details(
         details.insert("resource".to_string(), Value::from(resource));
     }
     Value::Object(details)
+}
+
+/// Signs in as the software itself with the client_credentials grant.
+pub async fn authorize_with_client_credentials(
+    metadata: &Value,
+    client_information: &Value,
+    scope: Option<&str>,
+    resource: Option<&url::Url>,
+) -> Result<Value, String> {
+    let token_endpoint = check_token_endpoint_to(&mut std::io::stderr(), metadata)?;
+    let supported_methods: Vec<&str> = metadata
+        .get("token_endpoint_auth_methods_supported")
+        .and_then(Value::as_array)
+        .map(|methods| methods.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let auth_method = select_client_auth_method(client_information, &supported_methods);
+    let resource = resource.map(url::Url::as_str);
+    let request = build_client_credentials_request(
+        auth_method,
+        client_information
+            .get("client_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        client_information
+            .get("client_secret")
+            .and_then(Value::as_str),
+        scope,
+        resource,
+    )?;
+
+    debug_log(
+        "Requesting a token with the client_credentials grant",
+        &[client_credentials_request_debug_details(
+            &token_endpoint,
+            auth_method,
+            scope,
+            resource,
+        )],
+    );
+
+    let response = post_form(&token_endpoint, &request).await?;
+    let body = serde_json::from_str::<Value>(&response.body).ok();
+    if !(200..300).contains(&response.status) {
+        return Err(token_request_failure_message(
+            response.status,
+            body.as_ref(),
+        ));
+    }
+
+    let tokens = parse_tokens(&body.unwrap_or(Value::Null)).map_err(|error| error.to_string())?;
+    log("Signed in with the client_credentials grant", &[]);
+    Ok(tokens)
 }
