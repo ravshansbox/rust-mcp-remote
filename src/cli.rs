@@ -40,8 +40,14 @@ impl SignIn {
 }
 
 /// The start of `runProxy` and `runClient`, up to the first connection attempt. `client_name`
-/// is the name the dynamic client registration uses.
-pub async fn prepare_sign_in(args: &CommandLineArgs, client_name: &str) -> Result<SignIn, String> {
+/// is the name the dynamic client registration uses. `skips_ownership_check` leaves the sign-in
+/// unsettled before the first attempt: proxy.ts skips it for both browserless grants, client.ts
+/// only for the device grant.
+pub async fn prepare_sign_in(
+    args: &CommandLineArgs,
+    client_name: &str,
+    skips_ownership_check: bool,
+) -> Result<SignIn, String> {
     let events = AuthEvents::new();
 
     // A redirect_uri pinned outside this process stops being valid on another port.
@@ -151,7 +157,7 @@ pub async fn prepare_sign_in(args: &CommandLineArgs, client_name: &str) -> Resul
     // Ownership is settled before the first connection attempt, so a follower never registers
     // its own client or issues its own PKCE challenge.
     let signs_in_without_a_callback_port = args.use_device_code || args.use_client_credentials;
-    if !signs_in_without_a_callback_port
+    if !skips_ownership_check
         && !has_usable_tokens(&args.server_url_hash)
         && server_issues_auth_challenge(&args.server_url, &args.headers).await
     {
