@@ -363,3 +363,94 @@ async fn uses_the_environment_proxy_only_with_enable_proxy() {
         .expect("the proxy hung");
     assert!(proxied.load(Ordering::SeqCst) > 0);
 }
+
+/// An HTTPS server for `localhost`, with a certificate from a fresh private CA. Returns its port,
+/// the CA certificate in PEM, and how many requests got past the TLS handshake.
+async fn https_server_with_private_ca()
+-> (u16, String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio_rustls::rustls;
+
+    let now = time::OffsetDateTime::now_utc();
+    let ca_key = rcgen::KeyPair::generate().unwrap();
+    let mut ca_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+    ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    ca_params.not_before = now - time::Duration::days(1);
+    ca_params.not_after = now + time::Duration::days(30);
+    ca_params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "mcp-remote test CA");
+    let ca_certificate = ca_params.self_signed(&ca_key).unwrap();
+    let issuer = rcgen::Issuer::new(ca_params, ca_key);
+
+    let server_key = rcgen::KeyPair::generate().unwrap();
+    let mut server_params = rcgen::CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
+    server_params.not_before = now - time::Duration::days(1);
+    server_params.not_after = now + time::Duration::days(30);
+    server_params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
+    let server_certificate = server_params.signed_by(&server_key, &issuer).unwrap();
+
+    let config = rustls::ServerConfig::builder_with_provider(Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_no_client_auth()
+    .with_single_cert(
+        vec![server_certificate.der().clone()],
+        rustls::pki_types::PrivateKeyDer::try_from(server_key.serialize_der()).unwrap(),
+    )
+    .unwrap();
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let requests = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&requests);
+    tokio::spawn(async move {
+        while let Ok((socket, _)) = listener.accept().await {
+            let acceptor = acceptor.clone();
+            let counted = Arc::clone(&counted);
+            tokio::spawn(async move {
+                let Ok(mut stream) = acceptor.accept(socket).await else {
+                    return;
+                };
+                let mut buffer = [0u8; 4096];
+                if stream.read(&mut buffer).await.unwrap_or(0) == 0 {
+                    return;
+                }
+                counted.fetch_add(1, Ordering::SeqCst);
+                let _ = stream
+                    .write_all(
+                        b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                    )
+                    .await;
+                let _ = stream.shutdown().await;
+            });
+        }
+    });
+    (port, ca_certificate.pem(), requests)
+}
+
+#[tokio::test]
+async fn trusts_the_certificates_in_node_extra_ca_certs() {
+    use std::sync::atomic::Ordering;
+
+    let (port, ca_pem, requests) = https_server_with_private_ca().await;
+    let ca_file = std::env::temp_dir().join(format!("rust-mcp-remote-test-ca-{port}.pem"));
+    std::fs::write(&ca_file, ca_pem).unwrap();
+    let url = format!("https://localhost:{port}/mcp");
+    let limit = std::time::Duration::from_secs(20);
+
+    exit_within(&url, &[], limit).await.expect("the proxy hung");
+    assert_eq!(requests.load(Ordering::SeqCst), 0);
+
+    let ca_path = ca_file.to_str().unwrap();
+    exit_within_env(&url, &[], &[("NODE_EXTRA_CA_CERTS", ca_path)], limit)
+        .await
+        .expect("the proxy hung");
+    assert!(requests.load(Ordering::SeqCst) > 0);
+    let _ = std::fs::remove_file(ca_file);
+}

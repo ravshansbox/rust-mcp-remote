@@ -175,7 +175,34 @@ pub fn configure_network(args: &CommandLineArgs) {
         headers_timeout: milliseconds(options.headers_timeout_ms),
         force_ipv4: options.force_ipv4,
         use_env_proxy: args.enable_proxy,
+        extra_root_certificates: extra_root_certificates(),
     });
+}
+
+/// The certificates in the file NODE_EXTRA_CA_CERTS names. Like Node, a file that cannot be
+/// loaded is reported and skipped rather than fatal.
+fn extra_root_certificates() -> Vec<reqwest::Certificate> {
+    let Some(path) = std::env::var_os("NODE_EXTRA_CA_CERTS").filter(|path| !path.is_empty()) else {
+        return Vec::new();
+    };
+    let loaded = std::fs::read(&path)
+        .map_err(|error| error.to_string())
+        .and_then(|pem| {
+            reqwest::Certificate::from_pem_bundle(&pem).map_err(|error| error.to_string())
+        });
+    match loaded {
+        Ok(certificates) => certificates,
+        Err(error) => {
+            log(
+                &format!(
+                    "Warning: Ignoring extra certs from `{}`, load failed: {error}",
+                    path.to_string_lossy()
+                ),
+                &[],
+            );
+            Vec::new()
+        }
+    }
 }
 
 /// `setupSignalHandlers`: on Ctrl+C, or when stdin reaches its end, logs the shutdown, runs
@@ -204,9 +231,26 @@ pub fn vpn_hint(error: &str) -> Option<String> {
     let untrusted = error.contains("self-signed certificate in certificate chain")
         || error.contains("UnknownIssuer");
     untrusted.then(|| {
-        "You may be behind a VPN!\n\n\
-         If you are behind a VPN, add its CA certificate to the system trust store, which is\n\
-         where mcp-remote looks for trusted certificates."
-            .to_owned()
+        r#"You may be behind a VPN!
+
+If you are behind a VPN, you can try setting the NODE_EXTRA_CA_CERTS environment variable to point
+to the CA certificate file. If using claude_desktop_config.json, this might look like:
+
+{
+  "mcpServers": {
+    "${mcpServerName}": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://remote.mcp.server/sse"
+      ],
+      "env": {
+        "NODE_EXTRA_CA_CERTS": "${your CA certificate file path}.pem"
+      }
+    }
+  }
+}
+        "#
+        .to_owned()
     })
 }
