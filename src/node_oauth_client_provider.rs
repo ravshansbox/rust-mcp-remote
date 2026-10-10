@@ -11,7 +11,9 @@ use url::Url;
 
 use crate::device_authorization::DEVICE_CODE_GRANT_TYPE;
 use crate::logging::{debug_log, log};
-use crate::mcp_auth_config::{read_config_lease, read_json_file, read_text_file, write_text_file};
+use crate::mcp_auth_config::{
+    delete_config_file, read_config_lease, read_json_file, read_text_file, write_text_file,
+};
 use crate::utils::{MCP_REMOTE_VERSION, build_redirect_url};
 
 const URL_SAFE_ANY_PADDING: GeneralPurpose = GeneralPurpose::new(
@@ -777,6 +779,22 @@ pub struct PendingFlow {
     pub challenge: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientRegistrationSource {
+    CachedDynamic,
+    FreshDynamic,
+    Static,
+    ClientIdMetadataDocument,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CredentialScope {
+    All,
+    Client,
+    Tokens,
+    Verifier,
+}
+
 pub struct NodeOAuthClientProvider {
     pub options: OAuthProviderOptions,
     pub server_url_hash: String,
@@ -804,6 +822,7 @@ pub struct NodeOAuthClientProvider {
     pub token_storm_brake: TokenStormBrake,
     pub authorization_storm_brake: AuthorizationStormBrake,
     pub pending_flow: Option<PendingFlow>,
+    pub client_registration_source: Option<ClientRegistrationSource>,
 }
 
 fn or_default(value: &Option<String>, default: &str) -> String {
@@ -853,6 +872,7 @@ impl NodeOAuthClientProvider {
             token_storm_brake: TokenStormBrake::default(),
             authorization_storm_brake: AuthorizationStormBrake::default(),
             pending_flow: None,
+            client_registration_source: None,
             options,
         })
     }
@@ -930,6 +950,49 @@ impl NodeOAuthClientProvider {
         )?;
         debug_log("Code verifier found:", &[json!(!verifier.is_empty())]);
         Ok(verifier)
+    }
+
+    pub fn invalidate_credentials(&mut self, scope: CredentialScope) {
+        debug_log(
+            &format!(
+                "Invalidating credentials: {}",
+                format!("{scope:?}").to_lowercase()
+            ),
+            &[],
+        );
+
+        match scope {
+            CredentialScope::All => {
+                delete_config_file(&self.server_url_hash, "client_info.json");
+                delete_config_file(&self.server_url_hash, "tokens.json");
+                delete_config_file(
+                    &self.server_url_hash,
+                    &code_verifier_file(self.flow_state()),
+                );
+                self.client_info = None;
+                self.client_registration_source = None;
+                self.pending_flow = None;
+                debug_log("All credentials invalidated", &[]);
+            }
+            CredentialScope::Client => {
+                delete_config_file(&self.server_url_hash, "client_info.json");
+                self.client_info = None;
+                self.client_registration_source = None;
+                debug_log("Client information invalidated", &[]);
+            }
+            CredentialScope::Tokens => {
+                delete_config_file(&self.server_url_hash, "tokens.json");
+                debug_log("OAuth tokens invalidated", &[]);
+            }
+            CredentialScope::Verifier => {
+                delete_config_file(
+                    &self.server_url_hash,
+                    &code_verifier_file(self.flow_state()),
+                );
+                self.pending_flow = None;
+                debug_log("Code verifier invalidated", &[]);
+            }
+        }
     }
 
     pub fn set_callback_port(&mut self, port: u16) {
