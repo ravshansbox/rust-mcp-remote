@@ -950,6 +950,7 @@ name = "rust-mcp-remote"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "getrandom 0.4.3",
  "httpdate",
  "libc",
  "md5",

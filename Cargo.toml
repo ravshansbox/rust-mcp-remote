@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 base64 = "0.23.1"
+getrandom = "0.4"
 httpdate = "1.0.3"
 libc = "0.2.190"
 md5 = "0.8.1"
