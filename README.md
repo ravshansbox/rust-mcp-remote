@@ -129,6 +129,16 @@ replaced by the binary.
   `--enable-proxy` apply to every request. In `mcp-remote`, some discovery
   requests ignore them.
 - Certificates come from the system trust store plus `NODE_EXTRA_CA_CERTS`.
+- Less memory. Proxying the GitHub MCP server (`https://api.githubcopilot.com/mcp`)
+  on macOS, idle after `initialize` and `tools/list`:
+
+  | Command | Resident memory |
+  | --- | --- |
+  | `rust-mcp-remote` | 16 MiB |
+  | `node` running `mcp-remote` 0.14.3 (Node.js 24) | 130 MiB |
+  | `npx -y mcp-remote` (adds the `npm exec` process) | 248 MiB |
+
+  A client config with five servers uses about 80 MiB instead of about 1.2 GiB.
 
 ## Limits
 
