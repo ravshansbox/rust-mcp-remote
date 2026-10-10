@@ -163,6 +163,8 @@ pub struct HttpSettings {
     pub force_ipv4: bool,
     /// `--enable-proxy`: use the HTTP_PROXY/HTTPS_PROXY environment variables.
     pub use_env_proxy: bool,
+    /// The certificates NODE_EXTRA_CA_CERTS names, trusted alongside the platform's own.
+    pub extra_root_certificates: Vec<reqwest::Certificate>,
 }
 
 static HTTP_SETTINGS: std::sync::OnceLock<HttpSettings> = std::sync::OnceLock::new();
@@ -210,6 +212,9 @@ pub fn client_builder() -> reqwest::ClientBuilder {
     }
     if settings.force_ipv4 {
         builder = builder.dns_resolver(Arc::new(Ipv4Only));
+    }
+    if !settings.extra_root_certificates.is_empty() {
+        builder = builder.tls_certs_merge(settings.extra_root_certificates.iter().cloned());
     }
     builder
 }
