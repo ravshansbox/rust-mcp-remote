@@ -768,6 +768,15 @@ pub struct OAuthProviderOptions {
     pub www_authenticate_scope: Option<String>,
 }
 
+pub const CONCURRENT_FLOW_WINDOW_MS: f64 = 10_000.0;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingFlow {
+    pub state: String,
+    pub started_at: f64,
+    pub challenge: Option<String>,
+}
+
 pub struct NodeOAuthClientProvider {
     pub options: OAuthProviderOptions,
     pub server_url_hash: String,
@@ -794,6 +803,7 @@ pub struct NodeOAuthClientProvider {
     pub www_authenticate_scope: Option<String>,
     pub token_storm_brake: TokenStormBrake,
     pub authorization_storm_brake: AuthorizationStormBrake,
+    pub pending_flow: Option<PendingFlow>,
 }
 
 fn or_default(value: &Option<String>, default: &str) -> String {
@@ -842,8 +852,29 @@ impl NodeOAuthClientProvider {
             www_authenticate_scope: options.www_authenticate_scope.clone(),
             token_storm_brake: TokenStormBrake::default(),
             authorization_storm_brake: AuthorizationStormBrake::default(),
+            pending_flow: None,
             options,
         })
+    }
+
+    pub fn next_state(&mut self, now_ms: f64) -> String {
+        if let Some(pending) = &self.pending_flow
+            && now_ms - pending.started_at < CONCURRENT_FLOW_WINDOW_MS
+        {
+            debug_log(
+                "Joining the sign-in already being started",
+                &[json!({ "state": pending.state })],
+            );
+            return pending.state.clone();
+        }
+        self.state = uuid::Uuid::new_v4().to_string();
+        self.incoming_state = None;
+        self.pending_flow = Some(PendingFlow {
+            state: self.state.clone(),
+            started_at: now_ms,
+            challenge: None,
+        });
+        self.state.clone()
     }
 
     pub fn set_callback_port(&mut self, port: u16) {
