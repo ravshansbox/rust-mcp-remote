@@ -229,10 +229,15 @@ pub fn acquire_config_lease(
     Ok(None)
 }
 
+/// Creates `path` with `contents` only if it does not exist yet. The contents are
+/// written to a temp file first and then hard-linked into place, so a reader never
+/// sees the empty file that a plain `create_new` would leave for a moment.
 fn write_new_owner_only(path: &Path, contents: &str) -> std::io::Result<()> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    options.open(path)?.write_all(contents.as_bytes())
+    let mut temp_path = path.as_os_str().to_owned();
+    temp_path.push(format!(".{}.tmp", uuid::Uuid::new_v4()));
+    let temp_path = PathBuf::from(temp_path);
+    let result =
+        write_owner_only(&temp_path, contents).and_then(|()| std::fs::hard_link(&temp_path, path));
+    let _ = std::fs::remove_file(&temp_path);
+    result
 }

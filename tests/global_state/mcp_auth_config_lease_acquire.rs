@@ -227,3 +227,57 @@ fn clearing_an_unreadable_lease_is_logged_without_an_owner() {
         ))));
     });
 }
+
+#[test]
+fn a_reader_never_sees_a_lease_file_without_its_contents() {
+    with_temporary_config_dir(|| {
+        let done = std::sync::atomic::AtomicBool::new(false);
+        let path = config_file_path(HASH, FILENAME);
+        let unreadable = std::thread::scope(|scope| {
+            let reader = scope.spawn(|| {
+                let mut unreadable = 0;
+                while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Ok(content) = std::fs::read_to_string(&path)
+                        && serde_json::from_str::<Value>(&content).is_err()
+                    {
+                        unreadable += 1;
+                    }
+                }
+                unreadable
+            });
+            for _ in 0..2000 {
+                if let Some(nonce) = acquire_config_lease(HASH, FILENAME, TTL).expect("config dir")
+                {
+                    release_config_lease(HASH, FILENAME, &nonce);
+                }
+            }
+            done.store(true, std::sync::atomic::Ordering::Relaxed);
+            reader.join().expect("reader")
+        });
+        assert_eq!(unreadable, 0);
+    });
+}
+
+#[test]
+fn acquiring_leaves_no_temp_files_behind() {
+    with_temporary_config_dir(|| {
+        let nonce = acquire_config_lease(HASH, FILENAME, TTL)
+            .expect("config dir")
+            .expect("lease");
+        assert_eq!(
+            acquire_config_lease(HASH, FILENAME, TTL).expect("config dir"),
+            None
+        );
+        release_config_lease(HASH, FILENAME, &nonce);
+        let directory = config_file_path(HASH, FILENAME)
+            .parent()
+            .expect("config dir")
+            .to_path_buf();
+        let leftovers: Vec<_> = std::fs::read_dir(directory)
+            .expect("read config dir")
+            .flatten()
+            .map(|entry| entry.file_name())
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    });
+}
