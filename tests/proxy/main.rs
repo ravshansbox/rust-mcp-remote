@@ -12,6 +12,7 @@ use rust_mcp_remote::stdio::TransportEvent;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
+mod era_bridging;
 mod stream_reconnect;
 
 /// An in-memory transport: what the proxy sends is recorded on `sent`, and
