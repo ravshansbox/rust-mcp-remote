@@ -365,6 +365,20 @@ async fn a_lapsed_barrier_holds_nothing_after_it() {
         .expect("each message waited out the barrier again");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sends_the_client_messages_in_the_order_they_arrived() {
+    let mut harness = start(ProxyOptions::default());
+    for id in 0..200 {
+        from_client(
+            &harness,
+            json!({"jsonrpc": "2.0", "id": id, "method": "tools/list"}),
+        );
+    }
+    for id in 0..200 {
+        assert_eq!(next(&mut harness.server.sent).await["id"], id);
+    }
+}
+
 #[tokio::test]
 async fn fails_an_initialize_the_server_accepted_but_never_answered() {
     let mut harness = start(ProxyOptions {
