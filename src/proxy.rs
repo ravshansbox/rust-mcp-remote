@@ -1,8 +1,7 @@
 //! The bidirectional proxy between the local client and the remote server
 //! (`mcpProxy` in utils.ts), in its `legacy` protocol mode.
 //!
-//! Not yet ported: the `auto` protocol mode (era probe and bridging) and
-//! stream-reconnect recovery.
+//! Not yet ported: the `auto` protocol mode (era probe and bridging).
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -13,9 +12,9 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use tokio::io::AsyncWrite;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::connect::RemoteTransport;
+use crate::connect::{RemoteTransport, StreamReconnectHook};
 use crate::logging::{debug_log, log};
 use crate::stdio::{StdioServerTransport, TransportEvent};
 use crate::streamable_http::{StreamableHttpClientTransport, TransportError};
@@ -28,6 +27,12 @@ pub const LIFECYCLE_BARRIER_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long to wait for the remote server to answer the client's `initialize`.
 pub const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long a reconnected SSE stream gets to advertise its new POST endpoint.
+pub const RECONNECT_ENDPOINT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How often the POST endpoint is checked while waiting for it to move.
+const RECONNECT_ENDPOINT_POLL: Duration = Duration::from_millis(25);
 
 /// How long to wait for the remote server to answer a re-initialize after its session expired.
 pub const REINITIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -97,6 +102,11 @@ pub trait ProxyTransport: Clone + Send + Sync + 'static {
     }
     /// Clears the session id, so a re-initialize is not sent against the dead session.
     fn clear_session_id(&self) {}
+    /// Where an SSE transport is currently POSTing, which is where its session lives. It moves
+    /// when the stream comes back on a new session.
+    fn post_endpoint(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Completes a sign-in, or discards a refused token, on the proxy's behalf.
@@ -139,6 +149,13 @@ impl ProxyTransport for RemoteTransport {
             transport.clear_session_id();
         }
     }
+
+    fn post_endpoint(&self) -> Option<String> {
+        match self {
+            RemoteTransport::Http(_) => None,
+            RemoteTransport::Sse(transport) => transport.endpoint().map(|url| url.to_string()),
+        }
+    }
 }
 
 impl ProxyTransport for StreamableHttpClientTransport {
@@ -176,6 +193,8 @@ pub struct ProxyOptions {
     pub initialize_timeout: Duration,
     pub reinitialize_timeout: Duration,
     pub lifecycle_barrier_timeout: Duration,
+    /// The transport's `onStreamReconnect` slot, which the proxy fills for as long as it runs.
+    pub stream_reconnect: Option<StreamReconnectHook>,
 }
 
 impl Default for ProxyOptions {
@@ -188,6 +207,7 @@ impl Default for ProxyOptions {
             initialize_timeout: INITIALIZE_TIMEOUT,
             reinitialize_timeout: REINITIALIZE_TIMEOUT,
             lifecycle_barrier_timeout: LIFECYCLE_BARRIER_TIMEOUT,
+            stream_reconnect: None,
         }
     }
 }
@@ -299,6 +319,8 @@ struct Shared<C, S> {
     pending_pings: Mutex<HashSet<String>>,
     reauthorize_flight: SingleFlight,
     reinitialize_flight: SingleFlight,
+    /// `sessionResumption`: true while the session is re-handshaked after the stream came back.
+    resuming: watch::Sender<bool>,
 }
 
 impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
@@ -363,6 +385,11 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
     }
 
     async fn send_to_server(self: Arc<Self>, message: Value) {
+        // The stream came back on a session that has not been handshaked yet; sending now would
+        // race the recovery onto the session the server dropped. The recovery's own messages go
+        // straight to the transport, so it never waits on itself.
+        self.await_session_resumption().await;
+
         let awaits_answer = is_request(&message);
         let mut already_reauthorized = false;
         let mut already_discarded_token = false;
@@ -456,6 +483,66 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
                 self.reply_with_error(&message, &retry_error).await;
             }
             return;
+        }
+    }
+
+    async fn await_session_resumption(&self) {
+        let mut resuming = self.resuming.subscribe();
+        let _ = resuming.wait_for(|resuming| !*resuming).await;
+    }
+
+    /// `onStreamReconnect`: the stream coming back is not the session coming back. The endpoint
+    /// moves to a session the server has just created, and requests would keep going out against
+    /// a lifecycle that never started.
+    fn on_stream_reconnect(self: Arc<Self>) {
+        let dropped_endpoint = self.server.post_endpoint();
+        // Set before anything is awaited: a client request arriving in the gap must not go out
+        // to the session that has gone away
+        self.resuming.send_replace(true);
+        let failed: Vec<String> = self.lock_pending().drain().collect();
+        tokio::spawn(async move {
+            // Whatever was in flight went to a session that no longer exists, and its answer was
+            // going to arrive on a stream that no longer exists either
+            self.fail_pending_requests(
+                failed,
+                "the connection to the remote server dropped before this could be answered",
+            )
+            .await;
+            let deadline = tokio::time::Instant::now() + RECONNECT_ENDPOINT_TIMEOUT;
+            // Giving up on the wait does not give up on the handshake: a server that reuses the
+            // endpoint still discarded the lifecycle
+            while self.server.post_endpoint() == dropped_endpoint
+                && tokio::time::Instant::now() < deadline
+            {
+                tokio::time::sleep(RECONNECT_ENDPOINT_POLL).await;
+            }
+            if let Err(error) = Arc::clone(&self).reinitialize_session().await {
+                on_server_error(&error);
+            }
+            self.resuming.send_replace(false);
+        });
+    }
+
+    /// `failPendingRequests`: answers every request the dropped session can no longer answer.
+    async fn fail_pending_requests(&self, ids: Vec<String>, reason: &str) {
+        if ids.is_empty() {
+            return;
+        }
+        debug_log(
+            "Failing requests the dropped session can no longer answer",
+            &[
+                json!({"ids": ids.iter().map(|id| serde_json::from_str::<Value>(id).unwrap_or(Value::Null)).collect::<Vec<_>>()}),
+            ],
+        );
+        for key in ids {
+            let id: Value = serde_json::from_str(&key).unwrap_or(Value::Null);
+            self.release(&id, None);
+            self.send_to_client(json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {"code": -32001, "message": format!("mcp-remote: {reason}")},
+            }))
+            .await;
         }
     }
 
@@ -788,7 +875,17 @@ pub async fn mcp_proxy<C: ProxyTransport, S: ProxyTransport>(
         pending_pings: Mutex::new(HashSet::new()),
         reauthorize_flight: SingleFlight::default(),
         reinitialize_flight: SingleFlight::default(),
+        resuming: watch::Sender::new(false),
     });
+    let reconnect_slot = shared.options.stream_reconnect.clone();
+    if let Some(slot) = &reconnect_slot {
+        let weak = Arc::downgrade(&shared);
+        *lock(slot) = Some(Arc::new(move || {
+            if let Some(shared) = weak.upgrade() {
+                shared.on_stream_reconnect();
+            }
+        }));
+    }
     let (forward, forward_receiver) = mpsc::unbounded_channel();
     let forwarder = tokio::spawn(forward_in_order(Arc::clone(&shared), forward_receiver));
     let mut keep_alive = shared
@@ -839,4 +936,7 @@ pub async fn mcp_proxy<C: ProxyTransport, S: ProxyTransport>(
     }
     stop_keep_alive(&mut keep_alive);
     forwarder.abort();
+    if let Some(slot) = &reconnect_slot {
+        *lock(slot) = None;
+    }
 }

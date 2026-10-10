@@ -12,6 +12,8 @@ use rust_mcp_remote::stdio::TransportEvent;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
+mod stream_reconnect;
+
 /// An in-memory transport: what the proxy sends is recorded on `sent`, and
 /// `fail_with` makes every send fail, and `fail_next` fails the next few.
 /// Closing it emits `Close` on its events.
@@ -25,6 +27,8 @@ struct FakeTransport {
     send_delay: Arc<Mutex<Option<Duration>>>,
     protocol_version: Arc<Mutex<Option<String>>>,
     closed: Arc<Mutex<bool>>,
+    /// An SSE transport's POST endpoint; when set, each sent message records it as `sentTo`.
+    endpoint: Arc<Mutex<Option<String>>>,
 }
 
 struct Side {
@@ -46,6 +50,10 @@ impl ProxyTransport for FakeTransport {
             }
             if let Some(error) = transport.fail_next.lock().unwrap().pop_front() {
                 return Err(error);
+            }
+            let mut message = message;
+            if let Some(endpoint) = transport.endpoint.lock().unwrap().clone() {
+                message["sentTo"] = json!(endpoint);
             }
             let _ = transport.sent.send(message);
             Ok(())
@@ -71,6 +79,10 @@ impl ProxyTransport for FakeTransport {
     fn clear_session_id(&self) {
         *self.session_id.lock().unwrap() = None;
     }
+
+    fn post_endpoint(&self) -> Option<String> {
+        self.endpoint.lock().unwrap().clone()
+    }
 }
 
 fn fake() -> (Side, mpsc::UnboundedReceiver<TransportEvent>) {
@@ -85,6 +97,7 @@ fn fake() -> (Side, mpsc::UnboundedReceiver<TransportEvent>) {
         send_delay: Arc::default(),
         protocol_version: Arc::default(),
         closed: Arc::default(),
+        endpoint: Arc::default(),
     };
     (
         Side {
