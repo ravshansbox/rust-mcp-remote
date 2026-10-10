@@ -544,3 +544,77 @@ pub fn synthesize_initialize_result(discover: &Value, identity: &LegacyClientIde
     }
     Value::Object(result)
 }
+
+/// What one answer to the SDK's own `server/discover` probe says, as its `classifyProbeOutcome`
+/// reads a result or a JSON-RPC error for an `auto` client that can fall back.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProbeVerdict {
+    Modern {
+        version: String,
+        discover: Value,
+    },
+    /// Ask again, once, offering this version instead.
+    Corrective {
+        version: String,
+    },
+    Legacy,
+    Error(String),
+}
+
+pub fn classify_probe_response(message: &Value, requested: &str) -> ProbeVerdict {
+    match message.get("error") {
+        Some(error) => classify_probe_error(error, requested),
+        None => {
+            let result = message.get("result").unwrap_or(&Value::Null);
+            if !is_discover_result(result) {
+                return ProbeVerdict::Legacy;
+            }
+            let supported: Vec<String> = result["supportedVersions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|version| version.as_str().map(str::to_string))
+                .collect();
+            match choose_modern_version(&supported) {
+                Some(version) => ProbeVerdict::Modern {
+                    version: version.to_string(),
+                    discover: result.clone(),
+                },
+                None => ProbeVerdict::Legacy,
+            }
+        }
+    }
+}
+
+/// `classifyRpcError`: only an unsupported-version error naming the versions it takes says
+/// anything; every other error is a server still expecting `initialize`.
+pub fn classify_probe_error(error: &Value, requested: &str) -> ProbeVerdict {
+    if error.get("code").and_then(Value::as_i64) != Some(MODERN_ERROR_CODES[0]) {
+        return ProbeVerdict::Legacy;
+    }
+    let data = error.get("data");
+    let Some(supported) = parse_supported_versions(data) else {
+        return ProbeVerdict::Legacy;
+    };
+    let supported_modern: Vec<String> = supported
+        .into_iter()
+        .filter(|version| version.as_str() >= FIRST_MODERN_PROTOCOL_VERSION)
+        .collect();
+    if let Some(version) = choose_modern_version(&supported_modern) {
+        return ProbeVerdict::Corrective {
+            version: version.to_string(),
+        };
+    }
+    if supported_modern.is_empty() {
+        return ProbeVerdict::Legacy;
+    }
+    let requested = data
+        .and_then(|data| data.get("requested"))
+        .and_then(Value::as_str)
+        .unwrap_or(requested);
+    let message = error.get("message").and_then(Value::as_str).map_or_else(
+        || format!("Unsupported protocol version: {requested}"),
+        str::to_string,
+    );
+    ProbeVerdict::Error(format!("MCP error {}: {message}", MODERN_ERROR_CODES[0]))
+}
