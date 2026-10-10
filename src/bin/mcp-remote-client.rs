@@ -2,8 +2,8 @@
 //! resources, and exits.
 
 use rust_mcp_remote::cli::{configure_network, prepare_sign_in, setup_signal_handlers};
-use rust_mcp_remote::client::{Client, attach_client_diagnostics};
-use rust_mcp_remote::connect::{ConnectOptions, RemoteConnection, connect_to_remote_server};
+use rust_mcp_remote::client::attach_client_diagnostics;
+use rust_mcp_remote::connect::{ConnectOptions, connect_client_to_remote_server};
 use rust_mcp_remote::logging::log;
 use rust_mcp_remote::protocol_era::ProtocolMode;
 use rust_mcp_remote::utils::{
@@ -23,7 +23,7 @@ async fn run_client(args: CommandLineArgs) -> Result<i32, String> {
     let sign_in =
         std::sync::Arc::new(prepare_sign_in(&args, "MCP CLI Client", args.use_device_code).await?);
 
-    let connected = connect_to_remote_server(
+    let connected = connect_client_to_remote_server(
         &sign_in.auth_provider,
         &sign_in.auth_initializer,
         &ConnectOptions {
@@ -33,16 +33,12 @@ async fn run_client(args: CommandLineArgs) -> Result<i32, String> {
             protocol_mode: ProtocolMode::Legacy,
             non_interactive_flow: args.non_interactive_flow,
         },
+        "mcp-remote",
+        MCP_REMOTE_VERSION,
     )
-    .await;
-    let connected = match connected {
-        Ok(RemoteConnection {
-            transport, events, ..
-        }) => Client::connect("mcp-remote", MCP_REMOTE_VERSION, transport, events)
-            .await
-            .map_err(|error| error.to_string()),
-        Err(error) => Err(error.to_string()),
-    };
+    .await
+    .map(|(client, _transport)| client)
+    .map_err(|error| error.to_string());
     let client = match connected {
         Ok(client) => client,
         Err(error) => {
