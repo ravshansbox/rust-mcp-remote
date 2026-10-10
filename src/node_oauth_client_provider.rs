@@ -1500,6 +1500,47 @@ impl NodeOAuthClientProvider {
         grant_types(self.use_client_credentials, self.use_device_code)
     }
 
+    pub fn preflight_cached_dynamic_client_registration(
+        &self,
+        authorization_url: &Url,
+        fetch: impl FnOnce(&Url) -> Result<(u16, String), String>,
+    ) -> Result<(), OAuthError> {
+        if self.client_registration_source != Some(ClientRegistrationSource::CachedDynamic) {
+            return Ok(());
+        }
+
+        let (status, body) = match fetch(authorization_url) {
+            Ok(response) => response,
+            Err(error) => {
+                debug_log(
+                    "Authorization preflight failed; continuing to browser authorization",
+                    &[json!(error)],
+                );
+                return Ok(());
+            }
+        };
+
+        if status != 400 && status != 401 {
+            return Ok(());
+        }
+
+        let error_response: Value = match serde_json::from_str(&body) {
+            Ok(error_response) => error_response,
+            Err(error) => {
+                debug_log(
+                    "Authorization preflight returned invalid JSON; continuing to browser authorization",
+                    &[json!(error.to_string())],
+                );
+                return Ok(());
+            }
+        };
+
+        match stale_client_registration_error(&error_response) {
+            Some(registration_error) => Err(registration_error),
+            None => Ok(()),
+        }
+    }
+
     pub fn client_metadata(&self) -> Value {
         let redirect_url = self.redirect_url();
         let effective_scope = self.effective_scope();
