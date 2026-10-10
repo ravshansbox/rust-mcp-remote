@@ -488,6 +488,13 @@ impl StreamableHttpClientTransport {
         self.inner.session_id.lock().ok()?.clone()
     }
 
+    /// Forgets the session id, so the next request starts a new session.
+    pub fn clear_session_id(&self) {
+        if let Ok(mut slot) = self.inner.session_id.lock() {
+            *slot = None;
+        }
+    }
+
     pub fn set_protocol_version(&self, version: Option<String>) {
         if let Ok(mut slot) = self.inner.protocol_version.lock() {
             *slot = version;

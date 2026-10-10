@@ -1,8 +1,10 @@
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use rust_mcp_remote::callback_server::AuthEvents;
 use rust_mcp_remote::connect::{
-    AuthInitialization, AuthInitializer, ConnectOptions, RemoteConnection, connect_to_remote_server,
+    AuthInitialization, AuthInitializer, ConnectOptions, RemoteConnection,
+    connect_to_remote_server, forget_rejected_authorization,
 };
 use rust_mcp_remote::coordination::{
     CoordinatedAuth, create_lazy_auth_coordinator, has_usable_tokens, server_issues_auth_challenge,
@@ -10,7 +12,7 @@ use rust_mcp_remote::coordination::{
 use rust_mcp_remote::logging::{debug_log, log};
 use rust_mcp_remote::node_oauth_client_provider::{NodeOAuthClientProvider, OAuthProviderOptions};
 use rust_mcp_remote::oauth_provider::OAuthProvider;
-use rust_mcp_remote::proxy::{ProxyOptions, mcp_proxy};
+use rust_mcp_remote::proxy::{AuthHook, ProxyOptions, mcp_proxy};
 use rust_mcp_remote::stdio::StdioServerTransport;
 use rust_mcp_remote::streamable_http::fetch_with_headers;
 use rust_mcp_remote::utils::{
@@ -181,6 +183,58 @@ async fn run_proxy(args: CommandLineArgs) -> Result<(), String> {
     );
     log("Press Ctrl+C to exit", &[]);
 
+    // Discards a token the server refused straight after issuing it, so the next attempt is an
+    // ordinary 401 that `reauthorize` can answer.
+    let forget_rejected: AuthHook = {
+        let auth_provider = Arc::clone(&auth_provider);
+        Arc::new(move || {
+            let auth_provider = Arc::clone(&auth_provider);
+            Box::pin(async move {
+                forget_rejected_authorization(&auth_provider).await;
+                Ok(())
+            })
+        })
+    };
+    // Finishes a sign-in the remote server asked for mid-session.
+    let reauthorize: AuthHook = {
+        let auth_initializer = Arc::clone(&auth_initializer);
+        let auth_provider = Arc::clone(&auth_provider);
+        let remote = remote.clone();
+        Arc::new(move || {
+            let auth_initializer = Arc::clone(&auth_initializer);
+            let auth_provider = Arc::clone(&auth_provider);
+            let remote = remote.clone();
+            Box::pin(async move {
+                // A grant that needs no browser already finished inside the redirect step
+                if signs_in_without_a_callback_port {
+                    log(
+                        "Signed in without a browser; retrying with the tokens it produced",
+                        &[],
+                    );
+                    return Ok(());
+                }
+                let initialization = auth_initializer(false).await?;
+                if initialization.skip_browser_auth {
+                    log(
+                        "Another instance is completing the sign-in; retrying with the tokens it writes",
+                        &[],
+                    );
+                    return Ok(());
+                }
+                let code = (initialization.wait_for_auth_code)().await?;
+                if let Some(state) = &code.state {
+                    auth_provider.use_authorization_state(state);
+                }
+                remote
+                    .finish_auth(&code.code, code.iss.as_deref())
+                    .await
+                    .map_err(|error| error.to_string())?;
+                log("Re-authorized with the remote server", &[]);
+                Ok(())
+            })
+        })
+    };
+
     let proxy = mcp_proxy(
         local.clone(),
         local_events,
@@ -188,6 +242,12 @@ async fn run_proxy(args: CommandLineArgs) -> Result<(), String> {
         remote_events,
         ProxyOptions {
             ignored_tools: args.ignored_tools.clone(),
+            keep_alive: args
+                .keep_alive
+                .enabled
+                .then(|| Duration::from_millis(args.keep_alive.interval_ms)),
+            reauthorize: Some(reauthorize),
+            forget_rejected_authorization: Some(forget_rejected),
             ..ProxyOptions::default()
         },
     );
