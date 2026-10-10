@@ -90,7 +90,7 @@ pub fn default_client() -> reqwest::Client {
         .unwrap_or_default()
 }
 
-fn default_fetch() -> FetchFn {
+pub fn default_fetch() -> FetchFn {
     let client = default_client();
     Arc::new(move |request| {
         let client = client.clone();
@@ -98,7 +98,7 @@ fn default_fetch() -> FetchFn {
     })
 }
 
-fn fetch_error(error: reqwest::Error) -> String {
+pub fn fetch_error(error: reqwest::Error) -> String {
     let mut message = error.to_string();
     let mut source = std::error::Error::source(&error);
     while let Some(cause) = source {
@@ -216,7 +216,7 @@ fn merge_accept(headers: &mut HeaderMap, extra: &[&str]) {
     set_header(headers, "accept", &unique.join(", "));
 }
 
-fn redirect_target(url: &Url, response: &Response) -> Option<Url> {
+pub fn redirect_target(url: &Url, response: &Response) -> Option<Url> {
     if ![301, 302, 303, 307, 308].contains(&response.status().as_u16()) {
         return None;
     }
@@ -227,7 +227,7 @@ fn redirect_target(url: &Url, response: &Response) -> Option<Url> {
     url.join(location).ok()
 }
 
-fn is_within_origin(from: &Url, to: &Url) -> bool {
+pub fn is_within_origin(from: &Url, to: &Url) -> bool {
     if from.scheme() == to.scheme() && from.host_str() == to.host_str() && from.port() == to.port()
     {
         return true;
