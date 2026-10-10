@@ -165,7 +165,7 @@ async fn run_proxy(args: CommandLineArgs) -> Result<(), String> {
     let RemoteConnection {
         transport: remote,
         events: remote_events,
-        ..
+        on_stream_reconnect,
     } = match connected {
         Ok(connection) => connection,
         Err(error) => {
@@ -250,6 +250,7 @@ async fn run_proxy(args: CommandLineArgs) -> Result<(), String> {
                 .then(|| Duration::from_millis(args.keep_alive.interval_ms)),
             reauthorize: Some(reauthorize),
             forget_rejected_authorization: Some(forget_rejected),
+            stream_reconnect: Some(on_stream_reconnect),
             ..ProxyOptions::default()
         },
     );
