@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
@@ -828,6 +829,7 @@ pub struct NodeOAuthClientProvider {
     pub pending_flow: Option<PendingFlow>,
     pub client_registration_source: Option<ClientRegistrationSource>,
     pub warned_about_missing_id_token: bool,
+    pub refresh_in_flight: Mutex<Option<Arc<OnceLock<Option<Value>>>>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -885,6 +887,7 @@ impl NodeOAuthClientProvider {
             pending_flow: None,
             client_registration_source: None,
             warned_about_missing_id_token: false,
+            refresh_in_flight: Mutex::new(None),
             options,
         })
     }
@@ -1220,6 +1223,39 @@ impl NodeOAuthClientProvider {
                 Some(UNCOORDINATED.to_string())
             }
         }
+    }
+
+    pub fn refresh_tokens(
+        &self,
+        refresh_token: &str,
+        do_refresh_tokens: impl FnOnce(&str) -> Option<Value>,
+    ) -> Option<Value> {
+        let (attempt, is_leader) = {
+            let mut in_flight = self
+                .refresh_in_flight
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            match in_flight.as_ref() {
+                Some(attempt) => (attempt.clone(), false),
+                None => {
+                    let attempt = Arc::new(OnceLock::new());
+                    *in_flight = Some(attempt.clone());
+                    (attempt, true)
+                }
+            }
+        };
+
+        if !is_leader {
+            return attempt.wait().clone();
+        }
+
+        let result = self.refresh_once_per_host(refresh_token, do_refresh_tokens);
+        let _ = attempt.set(result.clone());
+        *self
+            .refresh_in_flight
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        result
     }
 
     pub fn refresh_once_per_host(
