@@ -692,6 +692,29 @@ pub fn should_include_tool(ignore_patterns: &[String], tool_name: &str) -> bool 
         .any(|pattern| glob_matches(pattern, tool_name))
 }
 
+pub fn ignored_tool_call_error(
+    ignored_tools: &[String],
+    request: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    if request["method"] != "tools/call" {
+        return None;
+    }
+    let tool_name = request["params"]["name"]
+        .as_str()
+        .filter(|name| !name.is_empty())?;
+    if should_include_tool(ignored_tools, tool_name) {
+        return None;
+    }
+    Some(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request["id"],
+        "error": {
+            "code": -32603,
+            "message": format!("Tool \"{tool_name}\" is not available"),
+        },
+    }))
+}
+
 fn glob_matches(pattern: &str, text: &str) -> bool {
     let pattern: Vec<Option<char>> = pattern
         .chars()
