@@ -1,7 +1,14 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use reqwest::header::{HeaderValue, SET_COOKIE};
+use reqwest::{Request, Response};
+
+use crate::cookie_jar::CookieJar;
+use crate::streamable_http::{FetchFn, default_fetch};
 
 use crate::logging::log_to;
 
@@ -72,6 +79,85 @@ pub fn encode_mcp_header_value(value: &str) -> String {
             STANDARD.encode(value)
         )
     }
+}
+
+/// The cookies the remote server has set on this process. Process-wide, so stickiness survives
+/// a fallback, a re-authorization or a reconnected stream; the jar keys them by origin.
+static COOKIE_JAR: LazyLock<Mutex<CookieJar>> = LazyLock::new(|| Mutex::new(CookieJar::new()));
+
+/// COOKIES_ENABLED: whether to take part in cookie-based session stickiness. See
+/// `--disable-cookies`.
+static COOKIES_ENABLED: AtomicBool = AtomicBool::new(true);
+
+pub fn set_cookies_enabled(enabled: bool) {
+    COOKIES_ENABLED.store(enabled, Ordering::SeqCst);
+}
+
+/// `cookieHeaderFor`: the Cookie header the jar holds for `url`, if any.
+pub fn cookie_header_for(url: &str) -> Option<String> {
+    if !COOKIES_ENABLED.load(Ordering::SeqCst) {
+        return None;
+    }
+    COOKIE_JAR
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .header(url)
+}
+
+/// `captureCookies`: keeps the cookies a response for `url` sets.
+pub fn capture_cookies(url: &str, response: &Response) {
+    if !COOKIES_ENABLED.load(Ordering::SeqCst) {
+        return;
+    }
+    let set_cookies: Vec<&str> = response
+        .headers()
+        .get_all(SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .collect();
+    COOKIE_JAR
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .capture(url, &set_cookies);
+}
+
+fn set_header_if_absent(request: &mut Request, name: &'static str, value: &str) {
+    if let Ok(value) = HeaderValue::from_str(value)
+        && !request.headers().contains_key(name)
+    {
+        request.headers_mut().insert(name, value);
+    }
+}
+
+/// `fetchWithMcpHeaders`: mirrors the JSON-RPC method (and the tool, resource or prompt name)
+/// of the body into `Mcp-Method` and `Mcp-Name` (SEP-2243), sends the jar's cookies, and keeps
+/// the cookies the response sets. Headers the request already carries win, so `--header` still
+/// overrides. `fetch` is the one it wraps (the transports' own default when `None`).
+pub fn fetch_with_mcp_headers(fetch: Option<FetchFn>) -> FetchFn {
+    let fetch = fetch.unwrap_or_else(default_fetch);
+    Arc::new(move |mut request: Request| {
+        let url = request.url().to_string();
+        let mirrored = request
+            .body()
+            .and_then(|body| body.as_bytes())
+            .and_then(|body| std::str::from_utf8(body).ok())
+            .and_then(mcp_headers_from_body);
+        if let Some(mirrored) = mirrored {
+            set_header_if_absent(&mut request, "mcp-method", &mirrored.method);
+            if let Some(name) = &mirrored.name {
+                set_header_if_absent(&mut request, "mcp-name", &encode_mcp_header_value(name));
+            }
+        }
+        if let Some(cookie) = cookie_header_for(&url) {
+            set_header_if_absent(&mut request, "cookie", &cookie);
+        }
+        let response = fetch(request);
+        Box::pin(async move {
+            let response = response.await?;
+            capture_cookies(&url, &response);
+            Ok(response)
+        })
+    })
 }
 
 pub fn calculate_default_port(server_url_hash: &str) -> Option<u16> {

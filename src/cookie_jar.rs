@@ -12,7 +12,7 @@ struct StoredCookie {
 
 pub struct CookieJar {
     by_origin: HashMap<String, Vec<StoredCookie>>,
-    clock: Box<dyn Fn() -> SystemTime>,
+    clock: Box<dyn Fn() -> SystemTime + Send>,
 }
 
 impl Default for CookieJar {
@@ -26,7 +26,7 @@ impl CookieJar {
         Self::with_clock(SystemTime::now)
     }
 
-    pub fn with_clock(clock: impl Fn() -> SystemTime + 'static) -> Self {
+    pub fn with_clock(clock: impl Fn() -> SystemTime + Send + 'static) -> Self {
         Self {
             by_origin: HashMap::new(),
             clock: Box::new(clock),
