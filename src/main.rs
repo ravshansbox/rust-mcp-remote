@@ -173,7 +173,10 @@ async fn run_proxy(args: CommandLineArgs) -> Result<(), String> {
     let (local, local_events) = StdioServerTransport::start_stdio();
     log("Local STDIO server running", &[]);
     log(
-        "Proxy established successfully between local STDIO and remote StreamableHTTPClientTransport",
+        &format!(
+            "Proxy established successfully between local STDIO and remote {}",
+            remote.name()
+        ),
         &[],
     );
     log("Press Ctrl+C to exit", &[]);

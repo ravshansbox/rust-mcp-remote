@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use tokio::io::AsyncWrite;
 use tokio::sync::mpsc;
 
+use crate::connect::RemoteTransport;
 use crate::logging::{debug_log, log};
 use crate::stdio::{StdioServerTransport, TransportEvent};
 use crate::streamable_http::StreamableHttpClientTransport;
@@ -46,6 +47,26 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ProxyTransport for StdioServerTrans
 
     fn close_transport(&self) {
         self.close();
+    }
+}
+
+impl ProxyTransport for RemoteTransport {
+    fn send_message(&self, message: Value) -> BoxFuture<Result<(), String>> {
+        let transport = self.clone();
+        Box::pin(async move {
+            transport
+                .send(&message)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    fn close_transport(&self) {
+        self.close();
+    }
+
+    fn set_protocol_version(&self, version: String) {
+        RemoteTransport::set_protocol_version(self, Some(version));
     }
 }
 

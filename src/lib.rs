@@ -15,6 +15,7 @@ pub mod protected_resource_metadata;
 pub mod protocol_era;
 pub mod proxy;
 pub mod sse;
+pub mod sse_client;
 pub mod stdio;
 pub mod streamable_http;
 pub mod utils;

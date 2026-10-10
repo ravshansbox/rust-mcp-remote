@@ -2,9 +2,8 @@
 //! client, and answers what the probe runs into - a sign-in, a token refused straight after it
 //! was issued, or a server that speaks the other transport.
 //!
-//! Not yet ported: the SSE transport (so `sse-only`, `sse-first` and the fallback onto SSE fail
-//! with a connection error), the with-client mode client.ts uses, and the `auto` protocol
-//! mode's version negotiation in the probe.
+//! Not yet ported: the with-client mode client.ts uses, the `auto` protocol mode's version
+//! negotiation in the probe, and the SSE stream's reconnect notice.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -20,6 +19,7 @@ use crate::logging::{debug_log, log};
 use crate::node_oauth_client_provider::CredentialScope;
 use crate::oauth_provider::OAuthProvider;
 use crate::protocol_era::{LATEST_PROTOCOL_VERSION, ProtocolMode, SUPPORTED_PROTOCOL_VERSIONS};
+use crate::sse_client::{SseClientOptions, SseClientTransport};
 use crate::stdio::TransportEvent;
 use crate::streamable_http::{
     BoxFuture, StreamableHttpClientTransport, StreamableHttpOptions, TransportError, TransportOAuth,
@@ -111,9 +111,55 @@ fn is_unauthorized(error: &TransportError) -> bool {
     matches!(error, TransportError::Unauthorized(_)) || error.to_string().contains("Unauthorized")
 }
 
+/// Either transport connectToRemoteServer can hand back.
+#[derive(Clone)]
+pub enum RemoteTransport {
+    Http(StreamableHttpClientTransport),
+    Sse(SseClientTransport),
+}
+
+impl RemoteTransport {
+    /// The SDK class name, as `transport.constructor.name` logs it.
+    pub fn name(&self) -> &'static str {
+        match self {
+            RemoteTransport::Http(_) => "StreamableHTTPClientTransport",
+            RemoteTransport::Sse(_) => "SSEClientTransport",
+        }
+    }
+
+    pub async fn send(&self, message: &Value) -> Result<(), TransportError> {
+        match self {
+            RemoteTransport::Http(transport) => transport.send(message).await,
+            RemoteTransport::Sse(transport) => transport.send(message).await,
+        }
+    }
+
+    pub fn close(&self) {
+        match self {
+            RemoteTransport::Http(transport) => transport.close(),
+            RemoteTransport::Sse(transport) => transport.close(),
+        }
+    }
+
+    pub fn set_protocol_version(&self, version: Option<String>) {
+        match self {
+            RemoteTransport::Http(transport) => transport.set_protocol_version(version),
+            RemoteTransport::Sse(transport) => transport.set_protocol_version(version),
+        }
+    }
+
+    /// `finishAuth(code, iss)`; the SSE transport takes no `iss`.
+    pub async fn finish_auth(&self, code: &str, iss: Option<&str>) -> Result<(), TransportError> {
+        match self {
+            RemoteTransport::Http(transport) => transport.finish_auth(code, iss).await,
+            RemoteTransport::Sse(transport) => transport.finish_auth(code).await,
+        }
+    }
+}
+
 /// The connected remote transport and the events it delivers.
 pub struct RemoteConnection {
-    pub transport: StreamableHttpClientTransport,
+    pub transport: RemoteTransport,
     pub events: UnboundedReceiver<TransportEvent>,
 }
 
@@ -208,7 +254,7 @@ async fn attempt(
     auth: &dyn RemoteAuth,
     headers: &[(String, String)],
     strategy: TransportStrategy,
-) -> Result<RemoteConnection, (TransportError, Option<StreamableHttpClientTransport>)> {
+) -> Result<RemoteConnection, (TransportError, Option<RemoteTransport>)> {
     let sse_transport = matches!(
         strategy,
         TransportStrategy::SseOnly | TransportStrategy::SseFirst
@@ -218,10 +264,26 @@ async fn attempt(
         &[json!({"sseTransport": sse_transport})],
     );
     if sse_transport {
-        return Err((
-            TransportError::Other("The SSE transport is not supported yet".to_owned()),
-            None,
-        ));
+        let (transport, events) = SseClientTransport::new(
+            url.clone(),
+            SseClientOptions {
+                headers: headers.to_vec(),
+                oauth: Some(auth.transport_oauth()),
+                ..SseClientOptions::default()
+            },
+        );
+        debug_log("Starting transport directly", &[]);
+        // The SSE transport signs in from start(), so it is the one a 401 lands on. Closing it
+        // stops the EventSource reconnecting; finish_auth needs no stream.
+        if let Err(error) = transport.start().await {
+            transport.close();
+            return Err((error, Some(RemoteTransport::Sse(transport))));
+        }
+        log("Connected to remote server using SSEClientTransport", &[]);
+        return Ok(RemoteConnection {
+            transport: RemoteTransport::Sse(transport),
+            events,
+        });
     }
 
     let (transport, events) = http_transport(url, auth, headers);
@@ -238,7 +300,7 @@ async fn attempt(
     };
     if let Err(error) = probed {
         transport.close();
-        return Err((error, Some(probe)));
+        return Err((error, Some(RemoteTransport::Http(probe))));
     }
     probe.close();
 
@@ -246,7 +308,10 @@ async fn attempt(
         "Connected to remote server using StreamableHTTPClientTransport",
         &[],
     );
-    Ok(RemoteConnection { transport, events })
+    Ok(RemoteConnection {
+        transport: RemoteTransport::Http(transport),
+        events,
+    })
 }
 
 /// Creates and connects the remote transport, signing in when the server asks for it.
@@ -335,7 +400,14 @@ pub async fn connect_to_remote_server(
                 "Connection error",
                 &[json!({
                     "errorMessage": error.to_string(),
-                    "transportType": "StreamableHTTPClientTransport",
+                    "transportType": if matches!(
+                        strategy,
+                        TransportStrategy::SseOnly | TransportStrategy::SseFirst
+                    ) {
+                        "SSEClientTransport"
+                    } else {
+                        "StreamableHTTPClientTransport"
+                    },
                 })],
             );
             return Err(error);

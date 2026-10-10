@@ -414,9 +414,63 @@ async fn an_http_only_strategy_does_not_fall_back_on_a_404() {
 
 #[tokio::test]
 async fn an_http_first_strategy_falls_back_to_sse_on_a_404() {
-    // The SSE transport is not ported yet, so the fallback ends there
+    // The SSE attempt meets the same 404, and an sse-only strategy does not fall back again
     assert_eq!(
         connect_to_a_404(TransportStrategy::HttpFirst).await,
-        "The SSE transport is not supported yet"
+        "SSE error: Non-200 status code (404)"
     );
+}
+
+#[tokio::test]
+async fn an_sse_first_strategy_falls_back_to_http_on_a_404() {
+    assert_eq!(
+        connect_to_a_404(TransportStrategy::SseFirst).await,
+        "Error POSTing to endpoint: gone"
+    );
+}
+
+#[tokio::test]
+async fn an_sse_only_strategy_signs_in_from_the_stream_and_redeems_the_code_on_it() {
+    let (base, _requests) = serve(Arc::new(|request: &RecordedRequest| {
+        let authorized = request.header("authorization") == Some("Bearer at-1");
+        match (request.method.as_str(), authorized) {
+            (_, false) => reply(
+                401,
+                &[(
+                    "www-authenticate",
+                    "Bearer resource_metadata=\"http://127.0.0.1:9/prm\"",
+                )],
+                "",
+            ),
+            ("GET", true) => reply(
+                200,
+                &[("content-type", "text/event-stream")],
+                "retry: 60000\nevent: endpoint\ndata: /messages?sessionId=1\n\n",
+            ),
+            _ => reply(202, &[], ""),
+        }
+    }))
+    .await;
+    let auth = FakeAuth::new(false);
+    let mut options = options(&base);
+    options.transport_strategy = TransportStrategy::SseOnly;
+    let connection = connect_to_remote_server(
+        &Remote(Arc::clone(&auth)),
+        &owner_of("sse-code", Some("https://mcp.example.com")),
+        &options,
+    )
+    .await
+    .unwrap();
+
+    let calls = auth.code_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].authorization_code.as_deref(), Some("sse-code"));
+    // The SSE transport's finishAuth takes no iss
+    assert_eq!(calls[0].iss, None);
+    assert_eq!(
+        calls[0].resource_metadata_url.as_deref(),
+        Some("http://127.0.0.1:9/prm")
+    );
+    assert_eq!(connection.transport.name(), "SSEClientTransport");
+    connection.transport.close();
 }
