@@ -715,6 +715,45 @@ pub fn ignored_tool_call_error(
     }))
 }
 
+pub fn transform_proxy_response(
+    ignored_tools: &[String],
+    modern_era: bool,
+    request: &serde_json::Value,
+    response: serde_json::Value,
+) -> serde_json::Value {
+    use crate::protocol_era::{TranslatedResult, translate_modern_result};
+    let mut response = response;
+    if modern_era && let Some(result) = response.get_mut("result") {
+        match translate_modern_result(result.take()) {
+            TranslatedResult::Result(translated) => *result = translated,
+            TranslatedResult::Error { code, message } => {
+                return serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": response["id"],
+                    "error": {"code": code, "message": message},
+                });
+            }
+        }
+    }
+    if request["method"] != "tools/list" {
+        return response;
+    }
+    if let Some(serde_json::Value::Array(tools)) = response
+        .get_mut("result")
+        .and_then(|result| result.get_mut("tools"))
+    {
+        tools.retain(|tool| {
+            let tool_name = match tool.get("name") {
+                None => "undefined".to_string(),
+                Some(serde_json::Value::String(name)) => name.clone(),
+                Some(other) => other.to_string(),
+            };
+            should_include_tool(ignored_tools, &tool_name)
+        });
+    }
+    response
+}
+
 fn glob_matches(pattern: &str, text: &str) -> bool {
     let pattern: Vec<Option<char>> = pattern
         .chars()
