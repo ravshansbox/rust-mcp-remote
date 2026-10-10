@@ -11,7 +11,7 @@ use url::Url;
 
 use crate::device_authorization::DEVICE_CODE_GRANT_TYPE;
 use crate::logging::{debug_log, log};
-use crate::mcp_auth_config::{read_config_lease, read_json_file};
+use crate::mcp_auth_config::{read_config_lease, read_json_file, read_text_file, write_text_file};
 use crate::utils::{MCP_REMOTE_VERSION, build_redirect_url};
 
 const URL_SAFE_ANY_PADDING: GeneralPurpose = GeneralPurpose::new(
@@ -892,6 +892,44 @@ impl NodeOAuthClientProvider {
                 .as_ref()
                 .and_then(|pending| pending.challenge.as_deref()),
         )
+    }
+
+    pub fn save_code_verifier(&mut self, code_verifier: &str) -> std::io::Result<()> {
+        if let Some(pending) = &self.pending_flow
+            && pending.challenge.is_some()
+        {
+            debug_log(
+                "Keeping the code verifier already saved for this sign-in",
+                &[json!({ "state": pending.state })],
+            );
+            return Ok(());
+        }
+
+        debug_log("Saving code verifier", &[]);
+        let state = self
+            .pending_flow
+            .as_ref()
+            .map_or(&self.state, |pending| &pending.state);
+        write_text_file(
+            &self.server_url_hash,
+            &code_verifier_file(state),
+            code_verifier,
+        )?;
+        if let Some(pending) = &mut self.pending_flow {
+            pending.challenge = Some(code_challenge_for(code_verifier));
+        }
+        Ok(())
+    }
+
+    pub fn code_verifier(&self) -> std::io::Result<String> {
+        debug_log("Reading code verifier", &[]);
+        let verifier = read_text_file(
+            &self.server_url_hash,
+            &code_verifier_file(self.flow_state()),
+            Some("No code verifier saved for session"),
+        )?;
+        debug_log("Code verifier found:", &[json!(!verifier.is_empty())]);
+        Ok(verifier)
     }
 
     pub fn set_callback_port(&mut self, port: u16) {
