@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use url::Url;
 
-use crate::device_authorization::DEVICE_CODE_GRANT_TYPE;
+use crate::device_authorization::{DEVICE_CODE_GRANT_TYPE, supports_device_authorization};
 use crate::logging::{debug_log, iso_timestamp, log};
 use crate::mcp_auth_config::{
     acquire_config_lease, delete_config_file, delete_stale_config_files, read_config_lease,
@@ -1580,6 +1580,42 @@ impl NodeOAuthClientProvider {
             Some(registration_error) => Err(registration_error),
             None => Ok(()),
         }
+    }
+
+    pub fn authorize_with_device_code(
+        &mut self,
+        now_ms: f64,
+        get_authorization_server_metadata: impl FnOnce() -> Result<Option<Value>, String>,
+        run_device_flow: impl FnOnce(
+            &Value,
+            &Value,
+            Option<&str>,
+            Option<&Url>,
+        ) -> Result<Value, String>,
+    ) -> Result<(), String> {
+        let metadata = get_authorization_server_metadata()?;
+        let Some(metadata) =
+            metadata.filter(|metadata| supports_device_authorization(Some(metadata)))
+        else {
+            return Err("--device-code was passed but the authorization server does not offer the device grant. Remove the flag to sign in through a browser instead.".to_string());
+        };
+
+        let Some(client_information) = self.client_information() else {
+            return Err(
+                "No OAuth client is registered, so there is nothing to authorize".to_string(),
+            );
+        };
+
+        let scope = Some(self.effective_scope()).filter(|scope| !scope.is_empty());
+        let resource = self.device_authorization_resource()?;
+        let tokens = run_device_flow(
+            &metadata,
+            &client_information,
+            scope.as_deref(),
+            resource.as_ref(),
+        )?;
+
+        self.save_tokens(&tokens, now_ms)
     }
 
     pub fn authorize_with_client_credentials(
