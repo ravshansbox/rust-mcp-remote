@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use url::Url;
 
 use crate::device_authorization::DEVICE_CODE_GRANT_TYPE;
-use crate::logging::{debug_log, log};
+use crate::logging::{debug_log, iso_timestamp, log};
 use crate::mcp_auth_config::{
     delete_config_file, delete_stale_config_files, read_config_lease, read_json_file,
     read_text_file, write_json_file, write_text_file,
@@ -826,6 +826,13 @@ pub struct NodeOAuthClientProvider {
     pub authorization_storm_brake: AuthorizationStormBrake,
     pub pending_flow: Option<PendingFlow>,
     pub client_registration_source: Option<ClientRegistrationSource>,
+    pub warned_about_missing_id_token: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredTokens {
+    pub tokens: Value,
+    pub is_expired: bool,
 }
 
 fn or_default(value: &Option<String>, default: &str) -> String {
@@ -876,6 +883,7 @@ impl NodeOAuthClientProvider {
             authorization_storm_brake: AuthorizationStormBrake::default(),
             pending_flow: None,
             client_registration_source: None,
+            warned_about_missing_id_token: false,
             options,
         })
     }
@@ -1175,14 +1183,93 @@ impl NodeOAuthClientProvider {
         effective_scope(&self.scope_sources(), self.has_explicit_token_endpoint())
     }
 
+    fn stored_tokens(&self) -> Option<Value> {
+        read_json_file::<Value>(&self.server_url_hash, "tokens.json").filter(|stored| {
+            stored.get("access_token").is_some_and(Value::is_string)
+                && stored.get("token_type").is_some_and(Value::is_string)
+        })
+    }
+
     pub fn scope_to_repeat_on_refresh(&self) -> String {
-        read_json_file::<Value>(&self.server_url_hash, "tokens.json")
-            .filter(|stored| {
-                stored.get("access_token").is_some_and(Value::is_string)
-                    && stored.get("token_type").is_some_and(Value::is_string)
-            })
+        self.stored_tokens()
             .and_then(|stored| stored.get("scope")?.as_str().map(str::to_string))
             .unwrap_or_else(|| self.effective_scope())
+    }
+
+    pub fn as_bearer_tokens(&mut self, tokens: Option<Value>) -> Option<Value> {
+        as_bearer_tokens(
+            self.use_id_token,
+            &mut self.warned_about_missing_id_token,
+            tokens,
+        )
+    }
+
+    pub fn read_stored_tokens(&mut self, now_ms: f64) -> Option<StoredTokens> {
+        debug_log("Reading OAuth tokens", &[]);
+
+        let Some(tokens) = self.stored_tokens() else {
+            debug_log("Token result: Not found", &[]);
+            return None;
+        };
+
+        if scope_request_changed(&tokens, &self.scope_sources()) {
+            log(
+                "The scopes this client asks for have changed since it signed in; signing in again",
+                &[],
+            );
+            debug_log(
+                "Discarding a token obtained for a different scope request",
+                &[json!({
+                    "obtainedFor": tokens.get("requested_scope"),
+                    "nowRequesting": self.effective_scope(),
+                })],
+            );
+            self.invalidate_credentials(CredentialScope::Tokens);
+            return None;
+        }
+
+        let expires_in = tokens.get("expires_in").cloned().unwrap_or(Value::Null);
+        let time_left = expires_in
+            .as_f64()
+            .filter(|seconds| *seconds != 0.0)
+            .unwrap_or(0.0);
+
+        if expires_in.as_f64().is_none_or(|seconds| seconds < 0.0) {
+            debug_log(
+                "⚠️ WARNING: Invalid expires_in detected while reading tokens ⚠️",
+                &[json!({ "expiresIn": expires_in, "tokenObject": tokens.to_string() })],
+            );
+        }
+
+        let expires_at = bearer_expires_at(self.use_id_token, &tokens);
+        let is_expired = is_token_expired(expires_at, now_ms);
+
+        let is_present = |key: &str| {
+            tokens.get(key).is_some_and(|value| match value {
+                Value::String(text) => !text.is_empty(),
+                Value::Null | Value::Bool(false) => false,
+                _ => true,
+            })
+        };
+        let expires_at_text = expires_at
+            .filter(|expires_at| *expires_at != 0.0 && !expires_at.is_nan())
+            .map_or("unknown".to_string(), |expires_at| {
+                iso_timestamp(UNIX_EPOCH + Duration::from_millis(expires_at as u64))
+            });
+        debug_log(
+            "Token result:",
+            &[json!({
+                "found": true,
+                "hasAccessToken": is_present("access_token"),
+                "hasIdToken": is_present("id_token"),
+                "hasRefreshToken": is_present("refresh_token"),
+                "expiresIn": format!("{time_left} seconds"),
+                "expiresAt": expires_at_text,
+                "isExpired": is_expired,
+            })],
+        );
+
+        Some(StoredTokens { tokens, is_expired })
     }
 
     pub fn save_tokens(&mut self, tokens: &Value, now_ms: f64) -> Result<(), String> {
