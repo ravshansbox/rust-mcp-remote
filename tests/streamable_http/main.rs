@@ -4,4 +4,5 @@
 pub static GLOBAL_STATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 mod client_transport;
+mod oauth;
 mod test_server;

@@ -10,6 +10,10 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 
+use crate::auth::{
+    AuthError, AuthOptions, AuthResult, OAuthClientProvider, WwwAuthenticateChallenge, auth,
+    compute_scope_union, extract_www_authenticate_params, is_strict_scope_superset,
+};
 use crate::protocol_era::{FIRST_MODERN_PROTOCOL_VERSION, PROTOCOL_VERSION_META_KEY};
 use crate::sse::{EventSourceParser, SseItem};
 use crate::stdio::TransportEvent;
@@ -24,6 +28,56 @@ pub type FetchFn = Arc<dyn Fn(Request) -> BoxFuture<Result<Response, String>> + 
 pub type TokenFn = Arc<dyn Fn() -> BoxFuture<Result<Option<String>, String>> + Send + Sync>;
 
 const MAX_REDIRECTS: usize = 5;
+
+/// The SDK's DEFAULT_MAX_STEP_UP_RETRIES.
+const DEFAULT_MAX_STEP_UP_RETRIES: u32 = 1;
+
+/// What the transport needs from an OAuthClientProvider: the SDK's `adaptOAuthProvider`
+/// (the bearer token and the `onUnauthorized` run of `auth()`), plus the provider itself
+/// for `finishAuth` and the 403 step-up.
+pub trait TransportOAuth: Send + Sync {
+    fn tokens(&self) -> BoxFuture<Option<Value>>;
+    fn auth(&self, options: AuthOptions) -> BoxFuture<Result<AuthResult, AuthError>>;
+}
+
+impl<P: OAuthClientProvider + 'static> TransportOAuth for Arc<P> {
+    fn tokens(&self) -> BoxFuture<Option<Value>> {
+        let provider = Arc::clone(self);
+        Box::pin(async move { OAuthClientProvider::tokens(&*provider, None).await })
+    }
+
+    fn auth(&self, options: AuthOptions) -> BoxFuture<Result<AuthResult, AuthError>> {
+        let provider = Arc::clone(self);
+        Box::pin(async move { auth(&*provider, &options).await })
+    }
+}
+
+/// The SDK's `createFetchWithInit`: `headers` go on every request that does not set them itself.
+pub fn fetch_with_headers(fetch: Option<FetchFn>, headers: &[(String, String)]) -> Option<FetchFn> {
+    if headers.is_empty() {
+        return fetch;
+    }
+    let headers = headers.to_vec();
+    let fetch = fetch.unwrap_or_else(|| {
+        let client = redirect_following_client();
+        Arc::new(move |request| {
+            let client = client.clone();
+            Box::pin(async move { client.execute(request).await.map_err(fetch_error) })
+        })
+    });
+    Some(Arc::new(move |mut request: Request| {
+        for (name, value) in &headers {
+            if let (Ok(name), Ok(value)) = (
+                HeaderName::from_bytes(name.as_bytes()),
+                HeaderValue::from_str(value),
+            ) && !request.headers().contains_key(&name)
+            {
+                request.headers_mut().insert(name, value);
+            }
+        }
+        fetch(request)
+    }))
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReconnectionOptions {
@@ -49,9 +103,14 @@ pub struct StreamableHttpOptions {
     /// `requestInit.headers`: sent on every request, under the transport's own headers.
     pub headers: Vec<(String, String)>,
     pub fetch: Option<FetchFn>,
-    /// Present when the SDK would have an auth provider; a 401 then fails with
+    /// A minimal auth provider (just `token()`): a 401 then fails with
     /// `TransportError::Unauthorized`.
     pub token: Option<TokenFn>,
+    /// An OAuthClientProvider: a 401 runs `auth()` and retries once, a 403
+    /// `insufficient_scope` steps the scope up, and `finish_auth` redeems a code.
+    /// Takes the place of `token`.
+    pub oauth: Option<Arc<dyn TransportOAuth>>,
+    pub skip_issuer_metadata_validation: bool,
     pub session_id: Option<String>,
     pub protocol_version: Option<String>,
     pub reconnection: ReconnectionOptions,
@@ -66,6 +125,14 @@ pub enum TransportError {
         status: u16,
         message: String,
     },
+    /// The SDK's InsufficientScopeError: a 403 step-up with no OAuth provider to run it.
+    InsufficientScope {
+        required_scope: Option<String>,
+        resource_metadata_url: Option<String>,
+        error_description: Option<String>,
+    },
+    /// An error `auth()` threw while the transport ran it.
+    Auth(Box<AuthError>),
     Other(String),
 }
 
@@ -75,7 +142,18 @@ impl std::fmt::Display for TransportError {
             TransportError::Unauthorized(message)
             | TransportError::Http { message, .. }
             | TransportError::Other(message) => formatter.write_str(message),
+            TransportError::InsufficientScope { required_scope, .. } => match required_scope {
+                Some(scope) => write!(formatter, "Insufficient scope: required \"{scope}\""),
+                None => formatter.write_str("Insufficient scope"),
+            },
+            TransportError::Auth(error) => error.fmt(formatter),
         }
+    }
+}
+
+impl From<AuthError> for TransportError {
+    fn from(error: AuthError) -> Self {
+        TransportError::Auth(Box::new(error))
     }
 }
 
@@ -274,6 +352,13 @@ struct Inner {
     headers: Vec<(String, String)>,
     fetch: FetchFn,
     token: Option<TokenFn>,
+    oauth: Option<Arc<dyn TransportOAuth>>,
+    /// `_fetchWithInit`: the fetch `auth()` runs with.
+    auth_fetch: Option<FetchFn>,
+    skip_issuer_metadata_validation: bool,
+    resource_metadata_url: Mutex<Option<Url>>,
+    scope: Mutex<Option<String>>,
+    max_step_up_retries: u32,
     session_id: Mutex<Option<String>>,
     protocol_version: Mutex<Option<String>>,
     server_retry_ms: Mutex<Option<u64>>,
@@ -289,8 +374,7 @@ struct Inner {
 /// back as JSON or as an SSE stream; a standalone GET stream opens after the
 /// `notifications/initialized` POST.
 ///
-/// Not yet ported: OAuth (`onUnauthorized` retry, 403 step-up, `finishAuth`),
-/// per-request send options (resumption tokens, request signals, extra
+/// Not yet ported: the `(URLSearchParams)` form of `finishAuth`, DPoP, per-request send options (resumption tokens, request signals, extra
 /// headers) and a custom reconnection scheduler.
 #[derive(Clone)]
 pub struct StreamableHttpClientTransport {
@@ -303,11 +387,18 @@ impl StreamableHttpClientTransport {
         options: StreamableHttpOptions,
     ) -> (Self, mpsc::UnboundedReceiver<TransportEvent>) {
         let (events, receiver) = mpsc::unbounded_channel();
+        let auth_fetch = fetch_with_headers(options.fetch.clone(), &options.headers);
         let inner = Inner {
             url,
             headers: options.headers,
             fetch: options.fetch.unwrap_or_else(default_fetch),
             token: options.token,
+            oauth: options.oauth,
+            auth_fetch,
+            skip_issuer_metadata_validation: options.skip_issuer_metadata_validation,
+            resource_metadata_url: Mutex::new(None),
+            scope: Mutex::new(None),
+            max_step_up_retries: DEFAULT_MAX_STEP_UP_RETRIES,
             session_id: Mutex::new(options.session_id),
             protocol_version: Mutex::new(options.protocol_version),
             server_retry_ms: Mutex::new(None),
@@ -365,8 +456,29 @@ impl StreamableHttpClientTransport {
         self.inner.protocol_version.lock().ok()?.clone()
     }
 
+    /// Redeems the authorization code a sign-in brought back, the SDK's `finishAuth(code, iss)`.
+    pub async fn finish_auth(&self, code: &str, iss: Option<&str>) -> Result<(), TransportError> {
+        let Some(oauth) = &self.inner.oauth else {
+            return Err(TransportError::Unauthorized(
+                "finishAuth requires an OAuthClientProvider".to_owned(),
+            ));
+        };
+        let mut options = self.inner.auth_options();
+        options.authorization_code = Some(code.to_owned());
+        options.iss = iss.map(str::to_owned);
+        options.scope = self.inner.scope.lock().ok().and_then(|slot| slot.clone());
+        if oauth.auth(options).await? != AuthResult::Authorized {
+            return Err(TransportError::Unauthorized(
+                "Failed to authorize".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     pub async fn send(&self, message: &Value) -> Result<(), TransportError> {
-        let result = Arc::clone(&self.inner).send(message).await;
+        let result = Arc::clone(&self.inner)
+            .send(message.clone(), false, 0)
+            .await;
         if let Err(error) = &result {
             self.inner.emit_error(error.to_string());
         }
@@ -376,10 +488,14 @@ impl StreamableHttpClientTransport {
     /// Opens a GET stream that replays the events after `last_event_id`.
     pub async fn resume_stream(&self, last_event_id: &str) -> Result<(), TransportError> {
         Arc::clone(&self.inner)
-            .start_or_auth_sse(StreamOptions {
-                resumption_token: Some(last_event_id.to_owned()),
-                replay_message_id: None,
-            })
+            .start_or_auth_sse(
+                StreamOptions {
+                    resumption_token: Some(last_event_id.to_owned()),
+                    replay_message_id: None,
+                },
+                false,
+                0,
+            )
             .await
     }
 
@@ -452,8 +568,19 @@ impl Inner {
                 headers.append(name, value);
             }
         }
-        if let Some(token_fn) = &self.token {
-            let token = token_fn().await.map_err(TransportError::Other)?;
+        let token = if let Some(oauth) = &self.oauth {
+            oauth.tokens().await.and_then(|tokens| {
+                tokens
+                    .get("access_token")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+        } else if let Some(token_fn) = &self.token {
+            token_fn().await.map_err(TransportError::Other)?
+        } else {
+            None
+        };
+        {
             if let Some(token) = token.filter(|token| !token.is_empty()) {
                 set_header(&mut headers, "authorization", &format!("Bearer {token}"));
             }
@@ -524,7 +651,138 @@ impl Inner {
         }
     }
 
-    async fn send(self: Arc<Self>, message: &Value) -> Result<(), TransportError> {
+    fn has_auth_provider(&self) -> bool {
+        self.oauth.is_some() || self.token.is_some()
+    }
+
+    fn auth_options(&self) -> AuthOptions {
+        let mut options = AuthOptions::new(self.url.clone());
+        options.resource_metadata_url = self
+            .resource_metadata_url
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone());
+        options.fetch = self.auth_fetch.clone();
+        options.skip_issuer_metadata_validation = self.skip_issuer_metadata_validation;
+        options
+    }
+
+    /// Records what a 401's challenge says; `union` adds its scope to the earlier ones
+    /// instead of replacing them.
+    fn record_challenge(&self, response: &Response, union: bool) {
+        let Some(header) = response.headers().get("www-authenticate") else {
+            return;
+        };
+        let challenge = extract_www_authenticate_params(header.to_str().ok());
+        if let Ok(mut slot) = self.resource_metadata_url.lock() {
+            *slot = challenge.resource_metadata_url;
+        }
+        if let Ok(mut slot) = self.scope.lock() {
+            *slot = if union {
+                compute_scope_union(&[slot.as_deref(), challenge.scope.as_deref()])
+            } else {
+                challenge.scope
+            };
+        }
+    }
+
+    /// The SDK's `handleOAuthUnauthorized`: runs `auth()` with the 401's challenge.
+    async fn on_unauthorized(
+        &self,
+        oauth: &Arc<dyn TransportOAuth>,
+        response: &Response,
+    ) -> Result<(), TransportError> {
+        let challenge = extract_www_authenticate_params(
+            response
+                .headers()
+                .get("www-authenticate")
+                .and_then(|value| value.to_str().ok()),
+        );
+        let mut options = AuthOptions::new(self.url.clone());
+        options.resource_metadata_url = challenge.resource_metadata_url;
+        options.scope = challenge.scope;
+        options.fetch = self.auth_fetch.clone();
+        options.skip_issuer_metadata_validation = self.skip_issuer_metadata_validation;
+        if oauth.auth(options).await? != AuthResult::Authorized {
+            return Err(TransportError::Unauthorized("Unauthorized".to_owned()));
+        }
+        Ok(())
+    }
+
+    /// The SDK's `_stepUpAuthorize`: widens the scope to what a 403 asks for and signs in again.
+    async fn step_up_authorize(
+        &self,
+        challenge: WwwAuthenticateChallenge,
+        step_up_retries: u32,
+    ) -> Result<(), TransportError> {
+        let Some(oauth) = &self.oauth else {
+            return Err(TransportError::InsufficientScope {
+                required_scope: challenge.scope,
+                resource_metadata_url: challenge.resource_metadata_url.map(String::from),
+                error_description: challenge.error_description,
+            });
+        };
+        if step_up_retries >= self.max_step_up_retries {
+            return Err(TransportError::Http {
+                status: 403,
+                message: format!(
+                    "Server returned 403 insufficient_scope after step-up re-authorization (retry limit {} reached)",
+                    self.max_step_up_retries
+                ),
+            });
+        }
+        if let Some(url) = challenge.resource_metadata_url
+            && let Ok(mut slot) = self.resource_metadata_url.lock()
+        {
+            *slot = Some(url);
+        }
+        let granted = oauth.tokens().await.and_then(|tokens| {
+            tokens
+                .get("scope")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+        let union = {
+            let mut slot = self
+                .scope
+                .lock()
+                .map_err(|error| TransportError::Other(error.to_string()))?;
+            *slot = compute_scope_union(&[
+                slot.as_deref(),
+                granted.as_deref(),
+                challenge.scope.as_deref(),
+            ]);
+            slot.clone()
+        };
+        let mut options = self.auth_options();
+        options.force_reauthorization =
+            is_strict_scope_superset(union.as_deref(), granted.as_deref());
+        options.scope = union;
+        if oauth.auth(options).await? != AuthResult::Authorized {
+            return Err(TransportError::Unauthorized("Unauthorized".to_owned()));
+        }
+        Ok(())
+    }
+
+    fn send(
+        self: Arc<Self>,
+        message: Value,
+        is_auth_retry: bool,
+        step_up_retries: u32,
+    ) -> BoxFuture<Result<(), TransportError>> {
+        Box::pin(async move {
+            self.send_once(message, is_auth_retry, step_up_retries)
+                .await
+        })
+    }
+
+    async fn send_once(
+        self: Arc<Self>,
+        message: Value,
+        is_auth_retry: bool,
+        step_up_retries: u32,
+    ) -> Result<(), TransportError> {
+        let message = &message;
         let mut headers = self.common_headers().await?;
         if let Some(version) = envelope_version(message) {
             let method = message["method"].as_str().unwrap_or_default();
@@ -563,12 +821,36 @@ impl Inner {
         }
 
         if !status.is_success() {
-            if status.as_u16() == 401 && self.token.is_some() {
+            if status.as_u16() == 401 && self.has_auth_provider() {
+                self.record_challenge(&response, true);
+                if let Some(oauth) = self.oauth.clone()
+                    && !is_auth_retry
+                {
+                    self.on_unauthorized(&oauth, &response).await?;
+                    let _ = response.bytes().await;
+                    return self.send(message.clone(), true, step_up_retries).await;
+                }
                 let _ = response.bytes().await;
-                return Err(self.unauthorized(false));
+                return Err(self.unauthorized(is_auth_retry));
             }
             let redirect = unfollowed_redirect(&self.url, &response);
+            let challenge = (status.as_u16() == 403).then(|| {
+                extract_www_authenticate_params(
+                    response
+                        .headers()
+                        .get("www-authenticate")
+                        .and_then(|value| value.to_str().ok()),
+                )
+            });
             let text = response.text().await.ok();
+            if let Some(challenge) = challenge
+                && challenge.error.as_deref() == Some("insufficient_scope")
+            {
+                self.step_up_authorize(challenge, step_up_retries).await?;
+                return self
+                    .send(message.clone(), is_auth_retry, step_up_retries + 1)
+                    .await;
+            }
             if status.as_u16() == 400
                 && envelope_version(message).is_some_and(|v| v >= FIRST_MODERN_PROTOCOL_VERSION)
                 && let Some(parsed) = text
@@ -596,10 +878,14 @@ impl Inner {
                 let inner = Arc::clone(&self);
                 self.spawn(async move {
                     let _ = inner
-                        .start_or_auth_sse(StreamOptions {
-                            resumption_token: None,
-                            replay_message_id: None,
-                        })
+                        .start_or_auth_sse(
+                            StreamOptions {
+                                resumption_token: None,
+                                replay_message_id: None,
+                            },
+                            false,
+                            0,
+                        )
                         .await;
                 });
             }
@@ -660,6 +946,8 @@ impl Inner {
     fn start_or_auth_sse(
         self: Arc<Self>,
         options: StreamOptions,
+        is_auth_retry: bool,
+        step_up_retries: u32,
     ) -> BoxFuture<Result<(), TransportError>> {
         Box::pin(async move {
             let result = async {
@@ -671,9 +959,34 @@ impl Inner {
                 let response = self.fetch_within_origin(Method::GET, headers, None).await?;
                 let status = response.status();
                 if !status.is_success() {
-                    if status.as_u16() == 401 && self.token.is_some() {
+                    if status.as_u16() == 401 && self.has_auth_provider() {
+                        self.record_challenge(&response, true);
+                        if let Some(oauth) = self.oauth.clone()
+                            && !is_auth_retry
+                        {
+                            self.on_unauthorized(&oauth, &response).await?;
+                            let _ = response.bytes().await;
+                            return Arc::clone(&self)
+                                .start_or_auth_sse(options, true, step_up_retries)
+                                .await;
+                        }
                         let _ = response.bytes().await;
-                        return Err(self.unauthorized(false));
+                        return Err(self.unauthorized(is_auth_retry));
+                    }
+                    if status.as_u16() == 403 {
+                        let challenge = extract_www_authenticate_params(
+                            response
+                                .headers()
+                                .get("www-authenticate")
+                                .and_then(|value| value.to_str().ok()),
+                        );
+                        if challenge.error.as_deref() == Some("insufficient_scope") {
+                            let _ = response.bytes().await;
+                            self.step_up_authorize(challenge, step_up_retries).await?;
+                            return Arc::clone(&self)
+                                .start_or_auth_sse(options, is_auth_retry, step_up_retries + 1)
+                                .await;
+                        }
                     }
                     let reason = unfollowed_redirect(&self.url, &response)
                         .unwrap_or_else(|| status_text(&response));
@@ -726,7 +1039,7 @@ impl Inner {
                 resumption_token: options.resumption_token.clone(),
                 replay_message_id: options.replay_message_id.clone(),
             };
-            if let Err(error) = Arc::clone(&inner).start_or_auth_sse(retry).await {
+            if let Err(error) = Arc::clone(&inner).start_or_auth_sse(retry, false, 0).await {
                 if inner.closed.load(Ordering::SeqCst) {
                     return;
                 }

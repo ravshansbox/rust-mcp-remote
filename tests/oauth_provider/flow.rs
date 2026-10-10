@@ -5,6 +5,9 @@ use rust_mcp_remote::auth::{AuthOptions, AuthResult, OAuthClientProvider, auth};
 use rust_mcp_remote::mcp_auth_config::{read_json_file, write_json_file};
 use rust_mcp_remote::node_oauth_client_provider::{NodeOAuthClientProvider, OAuthProviderOptions};
 use rust_mcp_remote::oauth_provider::OAuthProvider;
+use rust_mcp_remote::streamable_http::{
+    StreamableHttpClientTransport, StreamableHttpOptions, TransportError,
+};
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
 use url::Url;
@@ -84,6 +87,17 @@ async fn auth_server() -> (String, UnboundedReceiver<RecordedRequest>) {
                 ),
                 _ => reply(400, &[JSON], r#"{"error":"unsupported_grant_type"}"#),
             },
+            "/mcp" if request.header("authorization") == Some("Bearer at-1") => reply(
+                200,
+                &[JSON],
+                r#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"fake","version":"1"}}}"#,
+            ),
+            "/mcp" => {
+                let header = format!(
+                    r#"Bearer resource_metadata="{base}/.well-known/oauth-protected-resource/mcp""#
+                );
+                reply(401, &[("www-authenticate", header.as_str())], "no")
+            }
             _ => reply(404, &[], "not found"),
         }
     }))
@@ -377,4 +391,58 @@ async fn add_client_authentication_repeats_the_granted_scope_on_refresh() {
         ]
     );
     assert!(headers.is_empty());
+}
+
+#[tokio::test]
+async fn the_transport_signs_in_on_a_401_and_finish_auth_lets_the_retry_through() {
+    let (base, mut requests) = auth_server().await;
+    let hash = unique_hash("transport");
+    let provider = Arc::new(provider(&base, &hash, OAuthProviderOptions::default()));
+    let initialize = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+        "protocolVersion": "2025-06-18", "capabilities": {},
+        "clientInfo": {"name": "test", "version": "1"}}});
+    let (transport, _events) = StreamableHttpClientTransport::new(
+        Url::parse(&format!("{base}/mcp")).unwrap(),
+        StreamableHttpOptions {
+            oauth: Some(Arc::new(Arc::clone(&provider))),
+            ..Default::default()
+        },
+    );
+    transport.start().unwrap();
+
+    // The 401 runs auth(), which registers a client and sends the browser off to sign in.
+    assert_eq!(
+        transport.send(&initialize).await,
+        Err(TransportError::Unauthorized("Unauthorized".to_owned()))
+    );
+    let opened = OPENED
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|url| url.contains(&base))
+        .cloned()
+        .expect("the browser was sent to the authorization URL");
+    let opened = Url::parse(&opened).unwrap();
+    let query: Vec<(String, String)> = opened.query_pairs().into_owned().collect();
+    assert_eq!(param(&query, "client_id"), Some("registered-client"));
+    assert_eq!(param(&query, "resource"), Some(&*format!("{base}/mcp")));
+    drain(&mut requests);
+
+    // The callback brings the code back; finishAuth redeems it and the retry goes through.
+    provider.use_authorization_state(param(&query, "state").unwrap());
+    transport.finish_auth("the-code", None).await.unwrap();
+    let token_request = drain(&mut requests)
+        .into_iter()
+        .find(|request| request.path == "/token")
+        .unwrap();
+    assert_eq!(param(&form(&token_request.body), "code"), Some("the-code"));
+
+    transport.send(&initialize).await.unwrap();
+    let post = drain(&mut requests)
+        .into_iter()
+        .find(|request| request.path == "/mcp")
+        .unwrap();
+    assert_eq!(post.header("authorization"), Some("Bearer at-1"));
+    let tokens: Value = read_json_file(&hash, "tokens.json").unwrap();
+    assert_eq!(tokens["access_token"], "at-1");
 }
