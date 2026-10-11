@@ -23,11 +23,14 @@ struct Store {
     discovery_state: Option<DiscoveryState>,
     invalidated: Vec<CredentialScope>,
     resource_url: Option<String>,
+    validated_resource: Option<(String, Option<String>)>,
 }
 
 struct TestProvider {
     store: Mutex<Store>,
     persist_discovery_state: bool,
+    /// When set, the provider overrides `validate_resource_url` and returns this.
+    resource_override: Option<Option<Url>>,
 }
 
 impl TestProvider {
@@ -35,6 +38,7 @@ impl TestProvider {
         Self {
             store: Mutex::new(Store::default()),
             persist_discovery_state: true,
+            resource_override: None,
         }
     }
 
@@ -127,6 +131,22 @@ impl OAuthClientProvider for TestProvider {
             self.store().discovery_state = Some(state.clone());
         }
         Ok(())
+    }
+
+    fn has_validate_resource_url(&self) -> bool {
+        self.resource_override.is_some()
+    }
+
+    async fn validate_resource_url(
+        &self,
+        default_resource: &Url,
+        discovered_resource: Option<&str>,
+    ) -> Result<Option<Url>, AuthError> {
+        self.store().validated_resource = Some((
+            default_resource.to_string(),
+            discovered_resource.map(str::to_owned),
+        ));
+        Ok(self.resource_override.clone().flatten())
     }
 
     async fn save_resource_url(&self, resource: &str) -> Result<(), AuthError> {
@@ -627,6 +647,52 @@ async fn select_resource_url_takes_the_metadata_resource_only_when_it_covers_the
     assert!(error.to_string().contains("does not match"), "{error}");
     let error = select(Some(json!({}))).await.unwrap_err();
     assert_eq!(error.to_string(), "Invalid URL");
+}
+
+#[tokio::test]
+async fn select_resource_url_defers_to_the_providers_validate_resource_url() {
+    let server = Url::parse("https://api.example/mcp/v1#frag").unwrap();
+    let chosen = Url::parse("https://elsewhere.example/resource").unwrap();
+    let provider = TestProvider {
+        resource_override: Some(Some(chosen.clone())),
+        ..TestProvider::new()
+    };
+
+    // The provider's answer wins, even for a resource the default check would reject.
+    let metadata = json!({"resource": "https://other.example/mcp"});
+    let resource = select_resource_url(&server, &provider, Some(&metadata))
+        .await
+        .unwrap();
+    assert_eq!(resource, Some(chosen));
+    assert_eq!(
+        provider.store().validated_resource,
+        Some((
+            "https://api.example/mcp/v1".to_owned(),
+            Some("https://other.example/mcp".to_owned())
+        ))
+    );
+
+    // It is asked even without metadata, and may decline to pick a resource.
+    let provider = TestProvider {
+        resource_override: Some(None),
+        ..TestProvider::new()
+    };
+    assert_eq!(
+        select_resource_url(&server, &provider, Some(&json!({})))
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        provider.store().validated_resource,
+        Some(("https://api.example/mcp/v1".to_owned(), None))
+    );
+    provider.store().validated_resource = None;
+    select_resource_url(&server, &provider, None).await.unwrap();
+    assert_eq!(
+        provider.store().validated_resource,
+        Some(("https://api.example/mcp/v1".to_owned(), None))
+    );
 }
 
 #[tokio::test]
