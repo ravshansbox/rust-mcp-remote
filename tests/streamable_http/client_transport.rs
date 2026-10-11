@@ -596,3 +596,52 @@ fn parse_jsonrpc_message_rejects_anything_else() {
         );
     }
 }
+
+#[tokio::test]
+async fn resume_stream_sends_the_last_event_id_and_tolerates_only_a_405() {
+    let gets = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&gets);
+    let (base, mut requests) = serve(handler(move |_| {
+        match counter.fetch_add(1, Ordering::SeqCst) {
+            0 => reply(
+                200,
+                &[SSE],
+                "id: e8\ndata: {\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{}}\n\n",
+            ),
+            1 => reply(405, &[], ""),
+            _ => reply(404, &[], ""),
+        }
+    }))
+    .await;
+    let (transport, mut events) = transport(&base, StreamableHttpOptions::default());
+
+    transport.resume_stream("e7").await.unwrap();
+
+    let get = next_request(&mut requests).await;
+    assert_eq!(get.method, "GET");
+    assert_eq!(get.header("accept"), Some("text/event-stream"));
+    assert_eq!(get.header("last-event-id"), Some("e7"));
+    assert_eq!(
+        next_event(&mut events).await,
+        TransportEvent::Message(json!({"jsonrpc":"2.0","id":3,"result":{}}))
+    );
+
+    transport.resume_stream("e8").await.unwrap();
+    assert_eq!(
+        next_request(&mut requests).await.header("last-event-id"),
+        Some("e8")
+    );
+
+    let error = transport.resume_stream("e9").await.unwrap_err();
+    assert_eq!(
+        error,
+        TransportError::Http {
+            status: 404,
+            message: "Failed to open SSE stream: Not Found".to_owned()
+        }
+    );
+    assert_eq!(
+        next_event(&mut events).await,
+        TransportEvent::Error("Failed to open SSE stream: Not Found".to_owned())
+    );
+}
