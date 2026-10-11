@@ -6,7 +6,7 @@ use reqwest::Url;
 use rust_mcp_remote::stdio::TransportEvent;
 use rust_mcp_remote::streamable_http::{
     ReconnectionOptions, StreamableHttpClientTransport, StreamableHttpOptions, TokenFn,
-    TransportError, is_within_origin, media_type_essence,
+    TransportError, is_within_origin, media_type_essence, parse_jsonrpc_message,
 };
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -449,5 +449,38 @@ fn media_type_essence_drops_parameters() {
         Some("text/event-stream")
     );
     assert_eq!(media_type_essence(Some("")), None);
+    assert_eq!(
+        media_type_essence(Some("text/event-stream; charset=utf-8, text/plain")),
+        None
+    );
     assert_eq!(media_type_essence(None), None);
+}
+
+#[test]
+fn parse_jsonrpc_message_accepts_requests_notifications_and_responses() {
+    for message in [
+        json!({"jsonrpc": "2.0", "id": 1, "method": "ping"}),
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        json!({"jsonrpc": "2.0", "id": "a", "result": {}}),
+        json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": "x"}}),
+    ] {
+        assert_eq!(parse_jsonrpc_message(message.clone()), Ok(message));
+    }
+}
+
+#[test]
+fn parse_jsonrpc_message_rejects_anything_else() {
+    for message in [
+        json!({"id": 1, "method": "ping"}),
+        json!({"jsonrpc": "1.0", "id": 1, "method": "ping"}),
+        json!({"jsonrpc": "2.0", "id": 1, "method": 7}),
+        json!({"jsonrpc": "2.0", "id": 1}),
+        json!({"jsonrpc": "2.0", "result": {}}),
+        json!([{"jsonrpc": "2.0", "method": "ping"}]),
+    ] {
+        assert_eq!(
+            parse_jsonrpc_message(message.clone()),
+            Err(format!("Invalid JSON-RPC message: {message}"))
+        );
+    }
 }
