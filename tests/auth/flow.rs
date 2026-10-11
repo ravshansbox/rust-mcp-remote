@@ -1,9 +1,10 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use rust_mcp_remote::auth::{
-    AuthError, AuthOptions, AuthResult, DiscoveryState, IssuerMismatchKind, OAuthClientProvider,
-    TokenRequestOptions, discover_oauth_server_info, execute_token_request, refresh_authorization,
-    register_client, resolve_authorization_callback_params, select_resource_url,
+    AuthError, AuthOptions, AuthResult, DiscoveryState, FetchTokenOptions, IssuerMismatchKind,
+    OAuthClientProvider, TokenRequestOptions, discover_oauth_server_info, execute_token_request,
+    fetch_token, refresh_authorization, register_client, resolve_authorization_callback_params,
+    select_resource_url,
 };
 use rust_mcp_remote::node_oauth_client_provider::{CredentialScope, code_challenge_for};
 use serde_json::{Value, json};
@@ -753,6 +754,74 @@ async fn execute_token_request_picks_the_endpoint_sets_the_resource_and_authenti
             }
         );
     }
+}
+
+#[tokio::test]
+async fn fetch_token_exchanges_the_code_with_stored_client_information() {
+    let (base, mut requests) = auth_server(Arc::new(|_, _| None)).await;
+    let provider = TestProvider::new();
+
+    // Without a prepared grant, an authorization code is required.
+    let error = fetch_token(&provider, &base, FetchTokenOptions::default())
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error,
+        AuthError::Other(
+            "Either provider.prepareTokenRequest() or authorizationCode is required".to_owned()
+        )
+    );
+
+    // The code is exchanged with the stored verifier, redirect URL and client_id.
+    provider.store().code_verifier = Some("the-verifier".to_owned());
+    provider.store().client_information = Some(json!({"client_id": "cid", "issuer": base}));
+    let tokens = fetch_token(
+        &provider,
+        &base,
+        FetchTokenOptions {
+            authorization_code: Some("the-code"),
+            resource: Some("https://api.example/mcp"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(tokens["access_token"], "at-1");
+    let seen = drain(&mut requests);
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].path, "/token");
+    let sent = form(&seen[0].body);
+    assert_eq!(param(&sent, "grant_type"), Some("authorization_code"));
+    assert_eq!(param(&sent, "code"), Some("the-code"));
+    assert_eq!(param(&sent, "code_verifier"), Some("the-verifier"));
+    assert_eq!(
+        param(&sent, "redirect_uri"),
+        Some("http://localhost:3334/oauth/callback")
+    );
+    assert_eq!(param(&sent, "resource"), Some("https://api.example/mcp"));
+    assert_eq!(param(&sent, "client_id"), Some("cid"));
+
+    // Client information stamped with another issuer is never presented.
+    provider.store().client_information =
+        Some(json!({"client_id": "cid", "issuer": "https://other.example"}));
+    let error = fetch_token(
+        &provider,
+        &base,
+        FetchTokenOptions {
+            authorization_code: Some("the-code"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        error,
+        AuthError::AuthorizationServerMismatch {
+            recorded: "https://other.example".to_owned(),
+            current: base.clone(),
+        }
+    );
+    assert!(drain(&mut requests).is_empty());
 }
 
 #[tokio::test]
