@@ -78,3 +78,21 @@ fn neither_captures_nor_sends_cookies_when_disabled() {
     assert_eq!(seen[0].header("mcp-method"), None);
     assert_eq!(seen[1].header("cookie"), None);
 }
+
+#[test]
+fn a_cookie_header_the_caller_set_wins_over_the_jar() {
+    let seen = with_cookies_enabled(true, async {
+        let (url, mut requests) = serve(Arc::new(|_| {
+            reply(200, &[("set-cookie", "session=abc; Path=/")], "{}")
+        }))
+        .await;
+        let fetch = fetch_with_mcp_headers(None);
+        let client = reqwest::Client::new();
+        fetch(client.get(&url).build().unwrap()).await.unwrap();
+        let own = client.get(&url).header("cookie", "session=mine");
+        fetch(own.build().unwrap()).await.unwrap();
+        requests.recv().await.unwrap();
+        requests.recv().await.unwrap()
+    });
+    assert_eq!(seen.header("cookie"), Some("session=mine"));
+}
