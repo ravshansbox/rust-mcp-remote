@@ -1,11 +1,5 @@
+use crate::pairs;
 use rust_mcp_remote::device_authorization::apply_client_authentication;
-
-fn pairs(values: &[(&str, &str)]) -> Vec<(String, String)> {
-    values
-        .iter()
-        .map(|(name, value)| (name.to_string(), value.to_string()))
-        .collect()
-}
 
 #[test]
 fn client_secret_basic_puts_the_credentials_on_the_authorization_header() {

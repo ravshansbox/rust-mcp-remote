@@ -1,11 +1,5 @@
+use crate::pairs;
 use rust_mcp_remote::device_authorization::{FormRequest, build_device_token_request};
-
-fn pairs(values: &[(&str, &str)]) -> Vec<(String, String)> {
-    values
-        .iter()
-        .map(|(name, value)| (name.to_string(), value.to_string()))
-        .collect()
-}
 
 #[test]
 fn none_adds_the_client_id_after_the_device_code() {

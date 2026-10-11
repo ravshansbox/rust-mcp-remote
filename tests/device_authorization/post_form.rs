@@ -2,14 +2,8 @@ use std::sync::Arc;
 
 use rust_mcp_remote::device_authorization::{FormRequest, FormResponse, post_form};
 
+use crate::pairs;
 use crate::test_server::{reply, serve};
-
-fn pairs(values: &[(&str, &str)]) -> Vec<(String, String)> {
-    values
-        .iter()
-        .map(|(name, value)| (name.to_string(), value.to_string()))
-        .collect()
-}
 
 #[tokio::test]
 async fn posts_the_encoded_params_with_the_headers_and_returns_status_and_body() {
