@@ -250,7 +250,15 @@ impl SendFailure {
 pub async fn within_headers_timeout(
     response: impl Future<Output = reqwest::Result<Response>>,
 ) -> Result<Response, SendFailure> {
-    match enabled(http_settings().headers_timeout) {
+    within_timeout(http_settings().headers_timeout, response).await
+}
+
+/// Waits for the response headers no longer than `timeout`; zero or `None` waits forever.
+pub async fn within_timeout(
+    timeout: Option<Duration>,
+    response: impl Future<Output = reqwest::Result<Response>>,
+) -> Result<Response, SendFailure> {
+    match enabled(timeout) {
         Some(timeout) => match tokio::time::timeout(timeout, response).await {
             Ok(response) => response.map_err(SendFailure::Request),
             Err(_) => Err(SendFailure::HeadersTimeout),

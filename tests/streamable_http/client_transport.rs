@@ -5,9 +5,9 @@ use std::time::Duration;
 use reqwest::Url;
 use rust_mcp_remote::stdio::TransportEvent;
 use rust_mcp_remote::streamable_http::{
-    ReconnectionOptions, StreamableHttpClientTransport, StreamableHttpOptions, TokenFn,
-    TransportError, fetch_error, is_within_origin, media_type_essence, parse_jsonrpc_message,
-    redirect_target, set_header, unfollowed_redirect,
+    ReconnectionOptions, SendFailure, StreamableHttpClientTransport, StreamableHttpOptions,
+    TokenFn, TransportError, fetch_error, is_within_origin, media_type_essence,
+    parse_jsonrpc_message, redirect_target, set_header, unfollowed_redirect, within_timeout,
 };
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -644,4 +644,41 @@ async fn resume_stream_sends_the_last_event_id_and_tolerates_only_a_405() {
         next_event(&mut events).await,
         TransportEvent::Error("Failed to open SSE stream: Not Found".to_owned())
     );
+}
+
+#[tokio::test]
+async fn within_timeout_gives_up_only_on_an_enabled_timeout() {
+    // Accepts connections but never answers, so the headers never arrive.
+    let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let silent_url = format!("http://{}/", silent.local_addr().unwrap());
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((stream, _)) = silent.accept().await {
+            held.push(stream);
+        }
+    });
+    let client = reqwest::Client::new();
+    let result = within_timeout(
+        Some(Duration::from_millis(50)),
+        client.get(&silent_url).send(),
+    )
+    .await;
+    assert!(matches!(result, Err(SendFailure::HeadersTimeout)));
+
+    // A zero timeout is disabled, so the request is still pending after the wait.
+    let pending = tokio::time::timeout(
+        Duration::from_millis(100),
+        within_timeout(Some(Duration::ZERO), client.get(&silent_url).send()),
+    )
+    .await;
+    assert!(pending.is_err());
+
+    let (url, _requests) = serve(Arc::new(|_| reply(204, &[], ""))).await;
+    let response = within_timeout(Some(Duration::from_secs(5)), client.get(&url).send())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 204);
+
+    let refused = within_timeout(None, client.get("http://127.0.0.1:1/").send()).await;
+    assert!(matches!(refused, Err(SendFailure::Request(_))));
 }
