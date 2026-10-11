@@ -1,11 +1,13 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
+use reqwest::Method;
 use rust_mcp_remote::auth::{
     AuthError, AuthOptions, AuthResult, DiscoveryState, FetchTokenOptions, IssuerMismatchKind,
     OAuthClientProvider, TokenRequestOptions, discover_authorization_server_metadata,
     discover_oauth_protected_resource_metadata, discover_oauth_server_info, exchange_authorization,
-    execute_token_request, fetch_token, refresh_authorization, register_client,
-    resolve_authorization_callback_params, resolve_client_metadata, select_resource_url,
+    execute_token_request, fetch_token, fetch_within_origin, refresh_authorization,
+    register_client, resolve_authorization_callback_params, resolve_client_metadata,
+    select_resource_url,
 };
 use rust_mcp_remote::node_oauth_client_provider::{CredentialScope, code_challenge_for};
 use serde_json::{Value, json};
@@ -1347,4 +1349,73 @@ async fn discover_oauth_protected_resource_metadata_falls_back_to_the_root_and_n
         ))
     );
     assert_eq!(drain(&mut requests).len(), 1);
+}
+
+#[tokio::test]
+async fn fetch_within_origin_follows_only_redirects_that_keep_method_origin_and_userinfo() {
+    let (other, _) = serve(Arc::new(|_: &RecordedRequest| reply(200, &[], "other"))).await;
+    let other = Arc::new(other);
+    let handler_other = Arc::clone(&other);
+    let own = Arc::new(OnceLock::<String>::new());
+    let handler_own = Arc::clone(&own);
+    let (base, mut requests) = serve(Arc::new(move |request: &RecordedRequest| {
+        let cross = format!("{handler_other}/x");
+        let own = handler_own.get().cloned().unwrap_or_default();
+        let userinfo = own.replacen("http://", "http://user:pw@", 1) + "/final";
+        match request.path.as_str() {
+            "/same" => reply(302, &[("location", "/final")], ""),
+            "/keep" => reply(307, &[("location", "/final")], ""),
+            "/cross" => reply(302, &[("location", cross.as_str())], ""),
+            "/userinfo" => reply(302, &[("location", userinfo.as_str())], ""),
+            "/loop" => reply(302, &[("location", "/loop")], ""),
+            _ => reply(200, &[], "final"),
+        }
+    }))
+    .await;
+    own.set(base.clone()).unwrap();
+    let fetch = |path: &str, method: Method| {
+        let url = Url::parse(&format!("{base}{path}")).unwrap();
+        async move {
+            fetch_within_origin(
+                None,
+                method,
+                &url,
+                &[("x-test".to_owned(), "1".to_owned())],
+                None,
+            )
+            .await
+            .unwrap()
+        }
+    };
+
+    // A same-origin GET redirect is followed and keeps the headers.
+    let response = fetch("/same", Method::GET).await;
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.text().await.unwrap(), "final");
+    let seen = drain(&mut requests);
+    assert_eq!(
+        seen.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(),
+        ["/same", "/final"]
+    );
+    assert!(seen.iter().all(|r| r.header("x-test") == Some("1")));
+
+    // A POST follows a 307 (method kept) but not a 302.
+    let response = fetch("/keep", Method::POST).await;
+    assert_eq!(response.status(), 200);
+    let seen = drain(&mut requests);
+    assert_eq!(
+        seen.iter().map(|r| r.method.as_str()).collect::<Vec<_>>(),
+        ["POST", "POST"]
+    );
+    assert_eq!(fetch("/same", Method::POST).await.status(), 302);
+    assert_eq!(drain(&mut requests).len(), 1);
+
+    // Redirects to another origin or with new userinfo come back unfollowed.
+    assert_eq!(fetch("/cross", Method::GET).await.status(), 302);
+    assert_eq!(fetch("/userinfo", Method::GET).await.status(), 302);
+    assert_eq!(drain(&mut requests).len(), 2);
+
+    // At most five redirects are followed; the sixth comes back as is.
+    assert_eq!(fetch("/loop", Method::GET).await.status(), 302);
+    assert_eq!(drain(&mut requests).len(), 6);
 }
