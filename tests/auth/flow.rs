@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use rust_mcp_remote::auth::{
     AuthError, AuthOptions, AuthResult, DiscoveryState, IssuerMismatchKind, OAuthClientProvider,
-    TokenRequestOptions, discover_oauth_server_info, refresh_authorization,
+    TokenRequestOptions, discover_oauth_server_info, refresh_authorization, register_client,
     resolve_authorization_callback_params, select_resource_url,
 };
 use rust_mcp_remote::node_oauth_client_provider::{CredentialScope, code_challenge_for};
@@ -580,6 +580,66 @@ async fn a_rejected_registration_carries_status_body_and_metadata() {
         error.to_string(),
         r#"Dynamic Client Registration rejected (HTTP 400): {"error":"invalid_redirect_uri"}"#
     );
+}
+
+#[tokio::test]
+async fn register_client_posts_to_the_advertised_or_default_endpoint() {
+    let (base, mut requests) = auth_server(Arc::new(|_, request| {
+        (request.path == "/custom-register").then(|| {
+            reply(
+                201,
+                &[JSON],
+                r#"{"client_id":"custom","redirect_uris":["http://localhost/cb"]}"#,
+            )
+        })
+    }))
+    .await;
+    let client_metadata = TestProvider::new().client_metadata();
+
+    // Without metadata the endpoint is /register on the server's origin, and the scope is added.
+    let info = register_client(
+        &format!("{base}/some/path"),
+        None,
+        &client_metadata,
+        Some("mcp:tools"),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(info["client_id"], "registered-client");
+    assert!(info.get("issuer").is_none());
+    let seen = drain(&mut requests);
+    assert_eq!(seen.len(), 1);
+    assert_eq!(
+        (seen[0].method.as_str(), seen[0].path.as_str()),
+        ("POST", "/register")
+    );
+    assert_eq!(seen[0].header("content-type"), Some("application/json"));
+    let submitted: Value = serde_json::from_str(&seen[0].body).unwrap();
+    assert_eq!(submitted["scope"], "mcp:tools");
+    assert_eq!(submitted["client_name"], "test");
+
+    // The advertised registration_endpoint wins, and no scope is sent unless one is given.
+    let metadata = json!({"registration_endpoint": format!("{base}/custom-register")});
+    let info = register_client(&base, Some(&metadata), &client_metadata, None, None)
+        .await
+        .unwrap();
+    assert_eq!(info["client_id"], "custom");
+    let seen = drain(&mut requests);
+    assert_eq!(seen[0].path, "/custom-register");
+    let submitted: Value = serde_json::from_str(&seen[0].body).unwrap();
+    assert!(submitted.get("scope").is_none());
+
+    // Metadata without a usable registration_endpoint means no dynamic registration.
+    for metadata in [json!({}), json!({"registration_endpoint": ""})] {
+        assert_eq!(
+            register_client(&base, Some(&metadata), &client_metadata, None, None).await,
+            Err(AuthError::Other(
+                "Incompatible auth server: does not support dynamic client registration".to_owned()
+            ))
+        );
+    }
+    assert!(drain(&mut requests).is_empty());
 }
 
 #[tokio::test]
