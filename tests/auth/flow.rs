@@ -2,9 +2,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use rust_mcp_remote::auth::{
     AuthError, AuthOptions, AuthResult, DiscoveryState, FetchTokenOptions, IssuerMismatchKind,
-    OAuthClientProvider, TokenRequestOptions, discover_oauth_server_info, exchange_authorization,
-    execute_token_request, fetch_token, refresh_authorization, register_client,
-    resolve_authorization_callback_params, resolve_client_metadata, select_resource_url,
+    OAuthClientProvider, TokenRequestOptions, discover_authorization_server_metadata,
+    discover_oauth_server_info, exchange_authorization, execute_token_request, fetch_token,
+    refresh_authorization, register_client, resolve_authorization_callback_params,
+    resolve_client_metadata, select_resource_url,
 };
 use rust_mcp_remote::node_oauth_client_provider::{CredentialScope, code_challenge_for};
 use serde_json::{Value, json};
@@ -1162,4 +1163,111 @@ fn resolve_client_metadata_fills_only_missing_grant_types_and_application_type()
     let metadata = resolve_client_metadata(&provider);
     assert_eq!(metadata["grant_types"], json!(["client_credentials"]));
     assert_eq!(metadata["application_type"], "web");
+}
+
+/// Serves `{base}/tenant` discovery: `status_for` picks each well-known path's status, and a
+/// 200 returns OIDC metadata whose issuer is `issuer(base)`.
+async fn tenant_discovery(
+    status_for: fn(&str) -> u16,
+    issuer: fn(&str) -> String,
+) -> (String, UnboundedReceiver<RecordedRequest>) {
+    let base = Arc::new(OnceLock::<String>::new());
+    let handler_base = Arc::clone(&base);
+    let (url, requests) = serve(Arc::new(move |request: &RecordedRequest| {
+        let base = handler_base.get().cloned().unwrap_or_default();
+        let status = status_for(&request.path);
+        if status != 200 {
+            return reply(status, &[], "");
+        }
+        reply(
+            200,
+            &[JSON],
+            &json!({
+                "issuer": issuer(&base),
+                "authorization_endpoint": format!("{base}/authorize"),
+                "token_endpoint": format!("{base}/token"),
+                "jwks_uri": format!("{base}/jwks"),
+                "response_types_supported": ["code"],
+                "subject_types_supported": ["public"],
+                "id_token_signing_alg_values_supported": ["RS256"],
+            })
+            .to_string(),
+        )
+    }))
+    .await;
+    base.set(url.clone()).unwrap();
+    (url, requests)
+}
+
+#[tokio::test]
+async fn discover_authorization_server_metadata_walks_the_well_known_urls() {
+    // 4xx and 502 move on to the next candidate; the path-suffixed OIDC URL answers.
+    let (base, mut requests) = tenant_discovery(
+        |path| match path {
+            "/.well-known/oauth-authorization-server/tenant" => 404,
+            "/.well-known/openid-configuration/tenant" => 502,
+            _ => 200,
+        },
+        |base| format!("{base}/tenant"),
+    )
+    .await;
+    let metadata = discover_authorization_server_metadata(
+        &format!("{base}/tenant"),
+        None,
+        Some("2025-06-18"),
+        false,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(metadata["issuer"], json!(format!("{base}/tenant")));
+    let seen = drain(&mut requests);
+    let paths: Vec<&str> = seen.iter().map(|r| r.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        [
+            "/.well-known/oauth-authorization-server/tenant",
+            "/.well-known/openid-configuration/tenant",
+            "/tenant/.well-known/openid-configuration",
+        ]
+    );
+    assert!(
+        seen.iter()
+            .all(|r| r.header("mcp-protocol-version") == Some("2025-06-18"))
+    );
+
+    // Every candidate missing is no metadata, not an error.
+    let (base, _requests) = tenant_discovery(|_| 404, |base| base.to_owned()).await;
+    let result =
+        discover_authorization_server_metadata(&format!("{base}/tenant"), None, None, false).await;
+    assert_eq!(result, Ok(None));
+
+    // Any other 5xx stops the walk.
+    let (base, mut requests) = tenant_discovery(|_| 500, |base| base.to_owned()).await;
+    let error =
+        discover_authorization_server_metadata(&format!("{base}/tenant"), None, None, false)
+            .await
+            .unwrap_err();
+    assert!(
+        matches!(&error, AuthError::Other(message) if message.starts_with("HTTP 500 trying to load OAuth metadata")),
+        "{error:?}"
+    );
+    assert_eq!(drain(&mut requests).len(), 1);
+
+    // A foreign issuer is refused unless validation is skipped.
+    let (base, _requests) = tenant_discovery(|_| 200, |_| "https://evil.example".to_owned()).await;
+    let expected = format!("{base}/tenant");
+    assert_eq!(
+        discover_authorization_server_metadata(&expected, None, None, false).await,
+        Err(AuthError::IssuerMismatch {
+            kind: IssuerMismatchKind::Metadata,
+            expected: expected.clone(),
+            received: Some("https://evil.example".to_owned()),
+        })
+    );
+    let metadata = discover_authorization_server_metadata(&expected, None, None, true)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(metadata["issuer"], "https://evil.example");
 }
