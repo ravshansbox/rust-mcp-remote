@@ -6,7 +6,7 @@ use reqwest::Url;
 use rust_mcp_remote::stdio::TransportEvent;
 use rust_mcp_remote::streamable_http::{
     ReconnectionOptions, SendFailure, StreamableHttpClientTransport, StreamableHttpOptions,
-    TokenFn, TransportError, fetch_error, is_within_origin, media_type_essence,
+    TokenFn, TransportError, fetch_error, fetch_with_headers, is_within_origin, media_type_essence,
     parse_jsonrpc_message, redirect_target, set_header, unfollowed_redirect, within_timeout,
 };
 use serde_json::{Value, json};
@@ -530,6 +530,52 @@ async fn terminate_session_sends_a_delete_and_forgets_the_session() {
     assert_eq!(request.header("mcp-session-id"), Some("session-2"));
     assert_eq!(transport.session_id(), None);
     transport.terminate_session().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_failed_terminate_session_keeps_the_session_and_reports_the_status() {
+    let (base, _requests) = serve(handler(|_| reply(500, &[], "boom"))).await;
+    let options = StreamableHttpOptions {
+        session_id: Some("session-3".to_owned()),
+        ..Default::default()
+    };
+    let (transport, mut events) = transport(&base, options);
+
+    let error = transport.terminate_session().await.unwrap_err();
+
+    assert_eq!(
+        error,
+        TransportError::Http {
+            status: 500,
+            message: "Failed to terminate session: Internal Server Error".to_owned(),
+        }
+    );
+    assert_eq!(transport.session_id().as_deref(), Some("session-3"));
+    assert_eq!(
+        next_event(&mut events).await,
+        TransportEvent::Error("Failed to terminate session: Internal Server Error".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn fetch_with_headers_adds_only_the_headers_a_request_does_not_set() {
+    let (base, mut requests) = serve(handler(|_| reply(200, &[], ""))).await;
+    let headers = [
+        ("x-extra".to_owned(), "added".to_owned()),
+        ("x-own".to_owned(), "default".to_owned()),
+        ("bad header".to_owned(), "skipped".to_owned()),
+    ];
+    assert!(fetch_with_headers(None, &[]).is_none());
+    let fetch = fetch_with_headers(None, &headers).unwrap();
+
+    let mut request = reqwest::Request::new(reqwest::Method::GET, Url::parse(&base).unwrap());
+    set_header(request.headers_mut(), "x-own", "mine");
+    let response = fetch(request).await.unwrap();
+
+    assert_eq!(response.status(), 200);
+    let request = next_request(&mut requests).await;
+    assert_eq!(request.header("x-extra"), Some("added"));
+    assert_eq!(request.header("x-own"), Some("mine"));
 }
 
 #[tokio::test]
