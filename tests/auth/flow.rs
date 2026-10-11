@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use rust_mcp_remote::auth::{
     AuthError, AuthOptions, AuthResult, DiscoveryState, IssuerMismatchKind, OAuthClientProvider,
-    TokenRequestOptions, discover_oauth_server_info, refresh_authorization, register_client,
-    resolve_authorization_callback_params, select_resource_url,
+    TokenRequestOptions, discover_oauth_server_info, execute_token_request, refresh_authorization,
+    register_client, resolve_authorization_callback_params, select_resource_url,
 };
 use rust_mcp_remote::node_oauth_client_provider::{CredentialScope, code_challenge_for};
 use serde_json::{Value, json};
@@ -640,6 +640,119 @@ async fn register_client_posts_to_the_advertised_or_default_endpoint() {
         );
     }
     assert!(drain(&mut requests).is_empty());
+}
+
+#[tokio::test]
+async fn execute_token_request_picks_the_endpoint_sets_the_resource_and_authenticates_the_client() {
+    let (base, mut requests) = auth_server(Arc::new(|_, request| match request.path.as_str() {
+        "/custom-token" => Some(reply(
+            200,
+            &[JSON],
+            r#"{"access_token":"at-2","token_type":"Bearer"}"#,
+        )),
+        "/error-in-body" => Some(reply(
+            200,
+            &[JSON],
+            r#"{"error":"invalid_grant","error_description":"expired"}"#,
+        )),
+        "/rejected" => Some(reply(400, &[JSON], r#"{"error":"invalid_client"}"#)),
+        _ => None,
+    }))
+    .await;
+    let params = || {
+        vec![
+            ("grant_type".to_owned(), "refresh_token".to_owned()),
+            ("resource".to_owned(), "https://stale.example".to_owned()),
+        ]
+    };
+
+    // Without metadata the endpoint is /token on the origin; the resource replaces any given one,
+    // and the secret goes in the body when the client registered client_secret_post.
+    let info = json!({"client_id": "cid", "client_secret": "s3cret",
+                      "token_endpoint_auth_method": "client_secret_post"});
+    let tokens = execute_token_request::<TestProvider>(
+        &format!("{base}/some/path"),
+        TokenRequestOptions {
+            client_information: Some(&info),
+            resource: Some("https://api.example/mcp"),
+            ..Default::default()
+        },
+        params(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(tokens["access_token"], "at-1");
+    let seen = drain(&mut requests);
+    assert_eq!(seen.len(), 1);
+    assert_eq!(
+        (seen[0].method.as_str(), seen[0].path.as_str()),
+        ("POST", "/token")
+    );
+    assert_eq!(
+        seen[0].header("content-type"),
+        Some("application/x-www-form-urlencoded")
+    );
+    assert_eq!(seen[0].header("accept"), Some("application/json"));
+    assert_eq!(seen[0].header("authorization"), None);
+    let sent = form(&seen[0].body);
+    assert_eq!(param(&sent, "resource"), Some("https://api.example/mcp"));
+    assert_eq!(sent.iter().filter(|(key, _)| key == "resource").count(), 1);
+    assert_eq!(param(&sent, "client_id"), Some("cid"));
+    assert_eq!(param(&sent, "client_secret"), Some("s3cret"));
+
+    // The advertised token_endpoint wins, and a secret defaults to client_secret_basic.
+    let metadata = json!({"token_endpoint": format!("{base}/custom-token")});
+    let info = json!({"client_id": "cid", "client_secret": "s3cret"});
+    let tokens = execute_token_request::<TestProvider>(
+        &base,
+        TokenRequestOptions {
+            metadata: Some(&metadata),
+            client_information: Some(&info),
+            ..Default::default()
+        },
+        params(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(tokens["access_token"], "at-2");
+    let seen = drain(&mut requests);
+    assert_eq!(seen[0].path, "/custom-token");
+    assert_eq!(
+        seen[0].header("authorization"),
+        Some("Basic Y2lkOnMzY3JldA==")
+    );
+    let sent = form(&seen[0].body);
+    assert_eq!(param(&sent, "client_secret"), None);
+    assert_eq!(param(&sent, "resource"), Some("https://stale.example"));
+
+    // An error object in a 200 body and a non-2xx status both become OAuth errors.
+    for (path, code, message) in [
+        ("/error-in-body", "invalid_grant", "expired"),
+        ("/rejected", "invalid_client", "invalid_client"),
+    ] {
+        let metadata = json!({"token_endpoint": format!("{base}{path}")});
+        let error = execute_token_request::<TestProvider>(
+            &base,
+            TokenRequestOptions {
+                metadata: Some(&metadata),
+                ..Default::default()
+            },
+            params(),
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error,
+            AuthError::OAuth {
+                code: code.to_owned(),
+                message: message.to_owned(),
+                error_uri: None,
+            }
+        );
+    }
 }
 
 #[tokio::test]
