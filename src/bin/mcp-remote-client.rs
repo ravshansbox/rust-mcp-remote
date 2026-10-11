@@ -11,6 +11,8 @@ use rust_mcp_remote::utils::{
     set_cookies_enabled,
 };
 use serde_json::Value;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 const USAGE: &str = "Usage: mcp-remote-client <https://server-url> [callback-port] [--debug]";
 
@@ -20,8 +22,7 @@ fn pretty(value: &Value) -> Value {
 
 /// `runClient` from client.ts. Returns the exit code.
 async fn run_client(args: CommandLineArgs) -> Result<i32, String> {
-    let sign_in =
-        std::sync::Arc::new(prepare_sign_in(&args, "MCP CLI Client", args.use_device_code).await?);
+    let sign_in = Arc::new(prepare_sign_in(&args, "MCP CLI Client", args.use_device_code).await?);
 
     let connected = connect_client_to_remote_server(
         &sign_in.auth_provider,
@@ -51,10 +52,15 @@ async fn run_client(args: CommandLineArgs) -> Result<i32, String> {
     // Log what arrives without displacing the dispatcher that settles requests.
     attach_client_diagnostics(&client, || std::process::exit(0));
 
+    // Set before the shutdown closes the client, so the requests it fails leave the exit to the
+    // signal handler instead of running on to "Exiting OK...".
+    let shutting_down = Arc::new(AtomicBool::new(false));
     {
         let client = client.clone();
-        let sign_in = std::sync::Arc::clone(&sign_in);
+        let sign_in = Arc::clone(&sign_in);
+        let shutting_down = Arc::clone(&shutting_down);
         setup_signal_handlers(move || {
+            shutting_down.store(true, Ordering::SeqCst);
             log("\nClosing connection...", &[]);
             client.close();
             sign_in.close_owned_auth();
@@ -66,6 +72,7 @@ async fn run_client(args: CommandLineArgs) -> Result<i32, String> {
     log("Requesting tools list...", &[]);
     match client.request("tools/list", None).await {
         Ok(tools) => log("Tools:", &[pretty(&tools)]),
+        Err(_) if shutting_down.load(Ordering::SeqCst) => std::future::pending().await,
         Err(error) => log(
             "Error requesting tools list:",
             &[Value::String(error.to_string())],
@@ -75,6 +82,7 @@ async fn run_client(args: CommandLineArgs) -> Result<i32, String> {
     log("Requesting resource list...", &[]);
     match client.request("resources/list", None).await {
         Ok(resources) => log("Resources:", &[pretty(&resources)]),
+        Err(_) if shutting_down.load(Ordering::SeqCst) => std::future::pending().await,
         Err(error) => log(
             "Error requesting resources list:",
             &[Value::String(error.to_string())],
