@@ -1,10 +1,11 @@
 use rust_mcp_remote::auth::{
-    AuthError, DiscoveryType, IssuerMismatchKind, StartAuthorizationOptions, build_discovery_urls,
-    check_resource_allowed, compute_scope_union, derive_application_type, determine_scope,
-    discard_if_issuer_mismatch, extract_field_from_www_auth, extract_www_authenticate_params,
-    is_https_url, is_strict_scope_superset, issuers_match, parse_error_response,
-    parse_oauth_metadata, parse_tokens, pkce_challenge, resource_url_from_server_url,
-    start_authorization, validate_authorization_response_issuer,
+    AuthError, DiscoveryType, IssuerMismatchKind, StartAuthorizationOptions,
+    assert_secure_token_endpoint, build_discovery_urls, check_resource_allowed,
+    compute_scope_union, derive_application_type, determine_scope, discard_if_issuer_mismatch,
+    extract_field_from_www_auth, extract_www_authenticate_params, is_https_url,
+    is_strict_scope_superset, issuers_match, parse_error_response, parse_oauth_metadata,
+    parse_tokens, pkce_challenge, resource_url_from_server_url, start_authorization,
+    validate_authorization_response_issuer,
 };
 use rust_mcp_remote::node_oauth_client_provider::code_challenge_for;
 use serde_json::json;
@@ -276,6 +277,34 @@ fn oauth_metadata_keeps_unknown_fields_and_drops_a_non_boolean_iss_flag() {
             "token_endpoint": "https://as/token", "response_types_supported": ["code"]
         }))
         .is_err()
+    );
+}
+
+#[test]
+fn token_endpoints_must_be_https_unless_on_a_loopback_host() {
+    for endpoint in [
+        "https://as.example/token",
+        "http://localhost:8080/token",
+        "http://auth.localhost/token",
+        "http://127.0.0.1/token",
+        "http://[::1]:9000/token",
+    ] {
+        assert_eq!(
+            assert_secure_token_endpoint(endpoint).unwrap().as_str(),
+            endpoint
+        );
+    }
+    assert_eq!(
+        assert_secure_token_endpoint("http://as.example/token").unwrap_err(),
+        AuthError::InsecureTokenEndpoint("http://as.example/token".to_owned())
+    );
+    assert_eq!(
+        assert_secure_token_endpoint("http://127.0.0.2/token").unwrap_err(),
+        AuthError::InsecureTokenEndpoint("http://127.0.0.2/token".to_owned())
+    );
+    assert_eq!(
+        assert_secure_token_endpoint("not a url").unwrap_err(),
+        AuthError::Other("Invalid URL".to_owned())
     );
 }
 
