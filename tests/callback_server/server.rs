@@ -256,3 +256,72 @@ async fn a_callback_without_a_code_is_a_bad_request() {
     assert_eq!(status, 400);
     assert_eq!(body, "Error: No authorization code received");
 }
+
+#[tokio::test]
+async fn matches_the_callback_path_ignoring_case_and_a_trailing_slash() {
+    let server = start("/oauth/callback", &AuthEvents::new(), None).await;
+    let (status, _) = get(format!(
+        "http://127.0.0.1:{}/OAuth/Callback/?code=any-case",
+        server.actual_port
+    ))
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        server.wait_for_auth_code().await,
+        Ok(code("any-case", None))
+    );
+}
+
+#[tokio::test]
+async fn answers_other_methods_with_an_express_style_404_and_head_without_a_body() {
+    let server = start("/oauth/callback", &AuthEvents::new(), None).await;
+    let client = reqwest::Client::new();
+
+    let post = client
+        .post(format!(
+            "http://127.0.0.1:{}/oauth/callback?code=posted",
+            server.actual_port
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(post.status().as_u16(), 404);
+    assert_eq!(post.text().await.unwrap(), "Cannot POST /oauth/callback");
+    assert_eq!(server.auth_code(), None);
+
+    let head = client
+        .head(format!(
+            "http://127.0.0.1:{}/.mcp-remote/id",
+            server.actual_port
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(head.status().as_u16(), 200);
+    assert_eq!(
+        head.headers()["content-type"],
+        "application/json; charset=utf-8"
+    );
+    assert_eq!(head.text().await.unwrap(), "");
+}
+
+#[tokio::test]
+async fn a_denial_without_a_description_falls_back_to_the_error_code() {
+    let events = AuthEvents::new();
+    let mut emitted = events.subscribe();
+    let server = start("/oauth/callback", &events, None).await;
+    let (status, body) = get(format!(
+        "http://127.0.0.1:{}/oauth/callback?error=access_denied",
+        server.actual_port
+    ))
+    .await;
+    assert_eq!(status, 400);
+    assert_eq!(
+        body,
+        "Authorization failed: access_denied\n\nYou may close this window and return to the CLI."
+    );
+    assert_eq!(
+        emitted.recv().await.unwrap(),
+        AuthEvent::CodeFailed("Authorization failed: access_denied - access_denied".to_owned())
+    );
+}
