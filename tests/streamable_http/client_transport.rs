@@ -6,8 +6,8 @@ use reqwest::Url;
 use rust_mcp_remote::stdio::TransportEvent;
 use rust_mcp_remote::streamable_http::{
     ReconnectionOptions, StreamableHttpClientTransport, StreamableHttpOptions, TokenFn,
-    TransportError, is_within_origin, media_type_essence, parse_jsonrpc_message, redirect_target,
-    set_header, unfollowed_redirect,
+    TransportError, fetch_error, is_within_origin, media_type_essence, parse_jsonrpc_message,
+    redirect_target, set_header, unfollowed_redirect,
 };
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -473,6 +473,30 @@ async fn unfollowed_redirect_names_a_sanitized_target_and_suggests_https() {
         )
     );
     assert_eq!(explain("/plain", "http://host/mcp").await, None);
+}
+
+#[tokio::test]
+async fn fetch_error_appends_every_cause_in_the_source_chain() {
+    let closed_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let error = reqwest::get(format!("http://127.0.0.1:{closed_port}/"))
+        .await
+        .unwrap_err();
+    let top = error.to_string();
+
+    let message = fetch_error(error);
+
+    assert!(
+        message.starts_with(&format!("{top}: ")),
+        "the top-level error should come first: {message}"
+    );
+    assert!(
+        message.contains("tcp connect error: "),
+        "the nested causes should follow: {message}"
+    );
 }
 
 #[test]
