@@ -82,3 +82,42 @@ fn an_empty_event_field_means_no_event_name() {
         vec![event(None, None, "x")]
     );
 }
+
+#[test]
+fn truncates_a_long_unknown_field_name_to_twenty_characters() {
+    let mut parser = EventSourceParser::new();
+    assert_eq!(
+        parser.feed(b"abcdefghijklmnopqrstuvwxyz: 1\n"),
+        vec![SseItem::Error(
+            "Unknown field \"abcdefghijklmnopqrst\u{2026}\"".to_owned()
+        )]
+    );
+}
+
+#[test]
+fn strips_only_one_leading_space_from_a_value() {
+    let mut parser = EventSourceParser::new();
+    assert_eq!(
+        parser.feed(b"data:  x \n\n"),
+        vec![event(None, None, " x ")]
+    );
+}
+
+#[test]
+fn an_empty_retry_value_is_an_error() {
+    let mut parser = EventSourceParser::new();
+    assert_eq!(
+        parser.feed(b"retry:\n"),
+        vec![SseItem::Error("Invalid `retry` value: \"\"".to_owned())]
+    );
+}
+
+#[test]
+fn keeps_a_bom_that_is_not_at_the_start_of_the_stream() {
+    let mut parser = EventSourceParser::new();
+    assert!(parser.feed(b"data: a").is_empty());
+    assert_eq!(
+        parser.feed(b"\xEF\xBB\xBF\n\n"),
+        vec![event(None, None, "a\u{feff}")]
+    );
+}
