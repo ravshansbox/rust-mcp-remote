@@ -1075,15 +1075,11 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
     }
 
     fn lock_transformer(&self) -> std::sync::MutexGuard<'_, HashMap<String, (u64, Value)>> {
-        self.transformer
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        lock(&self.transformer)
     }
 
     fn lock_pending(&self) -> std::sync::MutexGuard<'_, HashSet<String>> {
-        self.pending_requests
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        lock(&self.pending_requests)
     }
 
     async fn send_to_client(&self, message: Value) {
@@ -1521,10 +1517,7 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
         );
 
         if message["method"] == "initialize" {
-            *self
-                .initialize_request_id
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(id.clone());
+            *lock(&self.initialize_request_id) = Some(id.clone());
             if let Some(client_info) = message
                 .get_mut("params")
                 .and_then(|params| params.get_mut("clientInfo"))
@@ -1728,10 +1721,7 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
         );
 
         let answers_initialize = {
-            let mut initialize_id = self
-                .initialize_request_id
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut initialize_id = lock(&self.initialize_request_id);
             let matches = initialize_id
                 .as_ref()
                 .is_some_and(|initialize_id| message.get("id") == Some(initialize_id));
