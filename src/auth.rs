@@ -5,18 +5,18 @@
 //! DPoP is left out: mcp-remote's provider never supplies a `dpop()` hook.
 
 use std::future::Future;
+use std::sync::atomic::AtomicBool;
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use reqwest::{Method, Request, Response};
+use reqwest::{Method, Response};
 use serde_json::{Map, Value, json};
 use url::Url;
 
 use crate::device_authorization::{apply_client_authentication, select_client_auth_method};
 use crate::node_oauth_client_provider::CredentialScope;
 use crate::protocol_era::LATEST_PROTOCOL_VERSION;
-use crate::streamable_http::{FetchFn, default_fetch, is_within_origin, redirect_target};
+use crate::streamable_http::{self, FetchFn, default_fetch};
 
-const MAX_REDIRECTS: usize = 5;
 const AUTHORIZATION_CODE_RESPONSE_TYPE: &str = "code";
 const AUTHORIZATION_CODE_CHALLENGE_METHOD: &str = "S256";
 const PKCE_MASK: &[u8; 66] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
@@ -1089,32 +1089,11 @@ pub async fn fetch_within_origin(
     body: Option<String>,
 ) -> Result<Response, AuthError> {
     let fetch = fetch.cloned().unwrap_or_else(default_fetch);
+    let never_closed = AtomicBool::new(false);
     let headers = header_map(headers);
-    let mut current = url.clone();
-    let mut followed = 0;
-    loop {
-        let mut request = Request::new(method.clone(), current.clone());
-        *request.headers_mut() = headers.clone();
-        if let Some(body) = &body {
-            *request.body_mut() = Some(body.clone().into());
-        }
-        let response = fetch(request).await.map_err(AuthError::Network)?;
-        let Some(target) = redirect_target(&current, &response) else {
-            return Ok(response);
-        };
-        if followed == MAX_REDIRECTS {
-            return Ok(response);
-        }
-        let keeps_method = method == Method::GET || matches!(response.status().as_u16(), 307 | 308);
-        let keeps_userinfo = (target.username().is_empty() && target.password().is_none())
-            || (target.username() == current.username() && target.password() == current.password());
-        if !keeps_method || !keeps_userinfo || !is_within_origin(&current, &target) {
-            return Ok(response);
-        }
-        let _ = response.bytes().await;
-        current = target;
-        followed += 1;
-    }
+    streamable_http::fetch_within_origin(&fetch, url, method, headers, body, &never_closed)
+        .await
+        .map_err(|error| AuthError::Network(error.to_string()))
 }
 
 async fn read_json(response: Response) -> Result<Value, AuthError> {
