@@ -6,7 +6,8 @@ use reqwest::Url;
 use rust_mcp_remote::stdio::TransportEvent;
 use rust_mcp_remote::streamable_http::{
     ReconnectionOptions, StreamableHttpClientTransport, StreamableHttpOptions, TokenFn,
-    TransportError, is_within_origin, media_type_essence, parse_jsonrpc_message,
+    TransportError, is_within_origin, media_type_essence, parse_jsonrpc_message, redirect_target,
+    set_header,
 };
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -400,6 +401,55 @@ fn within_origin_allows_the_same_origin_and_an_https_upgrade_on_default_ports() 
     assert!(!within("http://host/mcp", "http://host:8080/mcp"));
     assert!(!within("http://host/mcp", "http://other/mcp"));
     assert!(!within("http://host/mcp", "https://other/mcp"));
+}
+
+#[tokio::test]
+async fn redirect_target_resolves_the_location_of_redirect_statuses_only() {
+    let (base, _requests) = serve(handler(|request| match request.path.as_str() {
+        "/dir/relative" => reply(308, &[("location", "moved?x=1")], ""),
+        "/dir/absolute" => reply(302, &[("location", "https://other.invalid/mcp")], ""),
+        "/dir/no-location" => reply(307, &[], ""),
+        "/dir/empty-location" => reply(301, &[("location", "")], ""),
+        "/dir/not-a-redirect" => reply(200, &[("location", "/moved")], ""),
+        _ => reply(404, &[], ""),
+    }))
+    .await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let target = async |path: &str| {
+        let url = Url::parse(&format!("{base}/dir{path}")).unwrap();
+        let response = client.get(url.clone()).send().await.unwrap();
+        redirect_target(&url, &response).map(String::from)
+    };
+
+    assert_eq!(
+        target("/relative").await.as_deref(),
+        Some(format!("{base}/dir/moved?x=1").as_str())
+    );
+    assert_eq!(
+        target("/absolute").await.as_deref(),
+        Some("https://other.invalid/mcp")
+    );
+    assert_eq!(target("/no-location").await, None);
+    assert_eq!(target("/empty-location").await, None);
+    assert_eq!(target("/not-a-redirect").await, None);
+}
+
+#[test]
+fn set_header_replaces_valid_headers_and_skips_invalid_ones() {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.append("x-test", "old".parse().unwrap());
+    headers.append("x-test", "older".parse().unwrap());
+
+    set_header(&mut headers, "X-Test", "new");
+    set_header(&mut headers, "bad header", "value");
+    set_header(&mut headers, "x-other", "bad\nvalue");
+
+    assert_eq!(headers.len(), 1);
+    let values: Vec<_> = headers.get_all("x-test").iter().collect();
+    assert_eq!(values, ["new"]);
 }
 
 #[tokio::test]
