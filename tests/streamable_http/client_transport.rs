@@ -6,7 +6,7 @@ use reqwest::Url;
 use rust_mcp_remote::stdio::TransportEvent;
 use rust_mcp_remote::streamable_http::{
     ReconnectionOptions, StreamableHttpClientTransport, StreamableHttpOptions, TokenFn,
-    TransportError, media_type_essence,
+    TransportError, is_within_origin, media_type_essence,
 };
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -383,6 +383,23 @@ async fn follows_a_same_origin_redirect_but_not_a_cross_origin_one() {
         "Error POSTing to endpoint: Redirect to http://elsewhere.invalid/mcp not followed; \
          use that URL as the endpoint if it is the intended server (redirectPolicy: 'same-origin')"
     );
+}
+
+#[test]
+fn within_origin_allows_the_same_origin_and_an_https_upgrade_on_default_ports() {
+    let url = |text: &str| Url::parse(text).unwrap();
+    let within = |from: &str, to: &str| is_within_origin(&url(from), &url(to));
+
+    assert!(within("http://host/mcp", "http://host/other?x=1"));
+    assert!(within("https://host:8443/mcp", "https://host:8443/moved"));
+    assert!(within("http://host/mcp", "https://host/mcp"));
+    assert!(within("http://host:80/mcp", "https://host:443/mcp"));
+
+    assert!(!within("https://host/mcp", "http://host/mcp"));
+    assert!(!within("http://host:8080/mcp", "https://host:8080/mcp"));
+    assert!(!within("http://host/mcp", "http://host:8080/mcp"));
+    assert!(!within("http://host/mcp", "http://other/mcp"));
+    assert!(!within("http://host/mcp", "https://other/mcp"));
 }
 
 #[tokio::test]
