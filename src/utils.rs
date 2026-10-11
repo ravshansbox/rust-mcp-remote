@@ -318,6 +318,12 @@ pub fn log_authorize_param_keys_to(console: &mut impl std::io::Write, args: &[St
     );
 }
 
+/// Returns the argument that follows the first occurrence of `flag`.
+fn option_value<'a>(args: &'a [String], flag: &str) -> Option<&'a String> {
+    let index = args.iter().position(|arg| arg == flag)?;
+    args.get(index + 1)
+}
+
 pub fn parse_seconds_option(args: &[String], flag: &str, allow_zero: bool) -> Option<u64> {
     parse_seconds_option_to(&mut std::io::stderr(), args, flag, allow_zero)
 }
@@ -328,8 +334,7 @@ pub fn parse_seconds_option_to(
     flag: &str,
     allow_zero: bool,
 ) -> Option<u64> {
-    let index = args.iter().position(|arg| arg == flag)?;
-    let raw = args.get(index + 1)?;
+    let raw = option_value(args, flag)?;
     let seconds = javascript_number(raw);
     if !seconds.is_finite() || seconds < 0.0 || (seconds == 0.0 && !allow_zero) {
         let expected = if allow_zero {
@@ -453,11 +458,7 @@ pub fn parse_transport_strategy_to(
     console: &mut impl std::io::Write,
     args: &[String],
 ) -> TransportStrategy {
-    let Some(raw) = args
-        .iter()
-        .position(|arg| arg == "--transport")
-        .and_then(|index| args.get(index + 1))
-    else {
+    let Some(raw) = option_value(args, "--transport") else {
         return TransportStrategy::default();
     };
     let strategy = [
@@ -495,11 +496,7 @@ pub fn parse_protocol_mode_to(
     args: &[String],
 ) -> crate::protocol_era::ProtocolMode {
     use crate::protocol_era::ProtocolMode;
-    let Some(raw) = args
-        .iter()
-        .position(|arg| arg == "--protocol")
-        .and_then(|index| args.get(index + 1))
-    else {
+    let Some(raw) = option_value(args, "--protocol") else {
         return ProtocolMode::default();
     };
     match [ProtocolMode::Legacy, ProtocolMode::Auto]
@@ -528,11 +525,7 @@ pub fn parse_protocol_mode_to(
 }
 
 pub fn parse_callback_host_to(console: &mut impl std::io::Write, args: &[String]) -> String {
-    match args
-        .iter()
-        .position(|arg| arg == "--host")
-        .and_then(|index| args.get(index + 1))
-    {
+    match option_value(args, "--host") {
         Some(host) => {
             log_to(console, &format!("Using callback hostname: {host}"), &[]);
             host.clone()
@@ -543,11 +536,7 @@ pub fn parse_callback_host_to(console: &mut impl std::io::Write, args: &[String]
 }
 
 pub fn parse_callback_path_to(console: &mut impl std::io::Write, args: &[String]) -> String {
-    let Some(value) = args
-        .iter()
-        .position(|arg| arg == "--callback-path")
-        .and_then(|index| args.get(index + 1))
-    else {
+    let Some(value) = option_value(args, "--callback-path") else {
         return DEFAULT_CALLBACK_PATH.to_string();
     };
     if !value.starts_with('/') {
@@ -576,11 +565,7 @@ pub fn parse_static_oauth_client_metadata_to(
     console: &mut impl std::io::Write,
     args: &[String],
 ) -> Result<Option<serde_json::Value>, String> {
-    let Some(value) = args
-        .iter()
-        .position(|arg| arg == "--static-oauth-client-metadata")
-        .and_then(|index| args.get(index + 1))
-    else {
+    let Some(value) = option_value(args, "--static-oauth-client-metadata") else {
         return Ok(None);
     };
     if let Some(file_path) = value.strip_prefix('@') {
@@ -607,11 +592,7 @@ pub fn parse_static_oauth_client_info_to(
     console: &mut impl std::io::Write,
     args: &[String],
 ) -> Result<Option<serde_json::Value>, String> {
-    let Some(value) = args
-        .iter()
-        .position(|arg| arg == "--static-oauth-client-info")
-        .and_then(|index| args.get(index + 1))
-    else {
+    let Some(value) = option_value(args, "--static-oauth-client-info") else {
         return Ok(None);
     };
     let context = "static OAuth client information";
@@ -903,11 +884,7 @@ pub fn parse_client_metadata_url_to(
     console: &mut impl std::io::Write,
     args: &[String],
 ) -> Option<String> {
-    let value = args
-        .iter()
-        .position(|arg| arg == "--client-metadata-url")
-        .and_then(|index| args.get(index + 1))?
-        .trim();
+    let value = option_value(args, "--client-metadata-url")?.trim();
     if is_client_metadata_url(value) {
         log_to(
             console,
@@ -1030,9 +1007,7 @@ pub fn parse_resource_to(
 ) -> Result<(Option<String>, bool), String> {
     let mut authorize_resource = None;
     let mut skip_resource_parameter = args.iter().any(|arg| arg == "--disable-resource-parameter");
-    if let Some(index) = args.iter().position(|arg| arg == "--resource")
-        && let Some(value) = args.get(index + 1).map(|value| value.trim())
-    {
+    if let Some(value) = option_value(args, "--resource").map(|value| value.trim()) {
         if value.is_empty() {
             skip_resource_parameter = true;
         } else {
@@ -1089,11 +1064,7 @@ pub fn parse_ignored_tools_to(
 }
 
 pub fn parse_auth_timeout_to(console: &mut impl std::io::Write, args: &[String]) -> u64 {
-    let Some(raw) = args
-        .iter()
-        .position(|arg| arg == "--auth-timeout")
-        .and_then(|index| args.get(index + 1))
-    else {
+    let Some(raw) = option_value(args, "--auth-timeout") else {
         return 30_000;
     };
     let trimmed = raw.trim_start();
