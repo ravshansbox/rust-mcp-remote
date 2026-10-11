@@ -2,9 +2,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use rust_mcp_remote::auth::{
     AuthError, AuthOptions, AuthResult, DiscoveryState, FetchTokenOptions, IssuerMismatchKind,
-    OAuthClientProvider, TokenRequestOptions, discover_oauth_server_info, execute_token_request,
-    fetch_token, refresh_authorization, register_client, resolve_authorization_callback_params,
-    select_resource_url,
+    OAuthClientProvider, TokenRequestOptions, discover_oauth_server_info, exchange_authorization,
+    execute_token_request, fetch_token, refresh_authorization, register_client,
+    resolve_authorization_callback_params, select_resource_url,
 };
 use rust_mcp_remote::node_oauth_client_provider::{CredentialScope, code_challenge_for};
 use serde_json::{Value, json};
@@ -822,6 +822,66 @@ async fn fetch_token_exchanges_the_code_with_stored_client_information() {
         }
     );
     assert!(drain(&mut requests).is_empty());
+}
+
+#[tokio::test]
+async fn exchange_authorization_checks_iss_before_sending_the_code() {
+    let (base, mut requests) = auth_server(Arc::new(|_, _| None)).await;
+    let metadata = json!({
+        "issuer": base,
+        "token_endpoint": format!("{base}/token"),
+        "authorization_response_iss_parameter_supported": true,
+    });
+    let exchange = |iss: Option<String>| {
+        let (base, metadata) = (&base, &metadata);
+        async move {
+            exchange_authorization::<TestProvider>(
+                base,
+                TokenRequestOptions {
+                    metadata: Some(metadata),
+                    client_information: Some(&json!({"client_id": "cid"})),
+                    ..Default::default()
+                },
+                "the-code",
+                iss.as_deref(),
+                "the-verifier",
+                "http://localhost:3334/oauth/callback",
+                None,
+            )
+            .await
+        }
+    };
+    let mismatch = |received: Option<&str>| AuthError::IssuerMismatch {
+        kind: IssuerMismatchKind::AuthorizationResponse,
+        expected: base.clone(),
+        received: received.map(str::to_owned),
+    };
+
+    // A missing iss, when the server promises one, and a foreign iss are refused unsent.
+    assert_eq!(exchange(None).await.unwrap_err(), mismatch(None));
+    assert_eq!(
+        exchange(Some("https://evil.example".to_owned()))
+            .await
+            .unwrap_err(),
+        mismatch(Some("https://evil.example"))
+    );
+    assert!(drain(&mut requests).is_empty());
+
+    // The matching iss lets the authorization_code grant through.
+    let tokens = exchange(Some(base.clone())).await.unwrap();
+    assert_eq!(tokens["access_token"], "at-1");
+    let seen = drain(&mut requests);
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].path, "/token");
+    let sent = form(&seen[0].body);
+    assert_eq!(param(&sent, "grant_type"), Some("authorization_code"));
+    assert_eq!(param(&sent, "code"), Some("the-code"));
+    assert_eq!(param(&sent, "code_verifier"), Some("the-verifier"));
+    assert_eq!(
+        param(&sent, "redirect_uri"),
+        Some("http://localhost:3334/oauth/callback")
+    );
+    assert_eq!(param(&sent, "client_id"), Some("cid"));
 }
 
 #[tokio::test]
