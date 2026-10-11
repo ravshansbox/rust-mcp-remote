@@ -12,6 +12,10 @@ mod next_poll_interval;
 mod parse_device_authorization_response;
 mod poll_for_tokens;
 mod polling_schedule;
+mod post_form;
 mod select_client_auth_method;
 mod supports_device_authorization;
+#[allow(dead_code)]
+#[path = "../streamable_http/test_server.rs"]
+mod test_server;
 mod verification_prompt_lines;
