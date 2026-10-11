@@ -4,8 +4,9 @@ use rust_mcp_remote::auth::{
     compute_scope_union, derive_application_type, determine_scope, discard_if_issuer_mismatch,
     extract_field_from_www_auth, extract_www_authenticate_params, is_https_url,
     is_strict_scope_superset, issuers_match, parse_client_information_full, parse_error_response,
-    parse_oauth_metadata, parse_protected_resource_metadata, parse_tokens, pkce_challenge,
-    resource_url_from_server_url, start_authorization, validate_authorization_response_issuer,
+    parse_oauth_metadata, parse_openid_provider_metadata, parse_protected_resource_metadata,
+    parse_tokens, pkce_challenge, resource_url_from_server_url, start_authorization,
+    validate_authorization_response_issuer,
 };
 use rust_mcp_remote::node_oauth_client_provider::code_challenge_for;
 use serde_json::json;
@@ -278,6 +279,41 @@ fn oauth_metadata_keeps_unknown_fields_and_drops_a_non_boolean_iss_flag() {
         }))
         .is_err()
     );
+}
+
+#[test]
+fn openid_provider_metadata_requires_oidc_fields_and_strips_the_rest() {
+    let required = json!({
+        "issuer": "https://op", "authorization_endpoint": "https://op/authorize",
+        "token_endpoint": "https://op/token", "jwks_uri": "https://op/jwks",
+        "response_types_supported": ["code"], "subject_types_supported": ["public"],
+        "id_token_signing_alg_values_supported": ["RS256"]
+    });
+    let mut full = required.clone();
+    full["code_challenge_methods_supported"] = json!(["S256"]);
+    full["authorization_response_iss_parameter_supported"] = json!(1);
+    full["custom"] = json!(true);
+    let mut expected = required.clone();
+    expected["code_challenge_methods_supported"] = json!(["S256"]);
+    assert_eq!(parse_openid_provider_metadata(&full).unwrap(), expected);
+    for missing in ["issuer", "jwks_uri", "subject_types_supported"] {
+        let mut invalid = required.clone();
+        invalid.as_object_mut().unwrap().remove(missing);
+        assert!(
+            parse_openid_provider_metadata(&invalid).is_err(),
+            "{missing}"
+        );
+    }
+    for (field, value) in [
+        ("token_endpoint", json!("javascript:alert(1)")),
+        ("userinfo_endpoint", json!("not a url")),
+        ("claims_parameter_supported", json!("true")),
+        ("scopes_supported", json!("openid")),
+    ] {
+        let mut invalid = required.clone();
+        invalid[field] = value;
+        assert!(parse_openid_provider_metadata(&invalid).is_err(), "{field}");
+    }
 }
 
 #[test]
