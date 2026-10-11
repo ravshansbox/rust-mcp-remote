@@ -2,7 +2,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use rust_mcp_remote::auth::{
     AuthError, AuthOptions, AuthResult, DiscoveryState, IssuerMismatchKind, OAuthClientProvider,
-    TokenRequestOptions, discover_oauth_server_info, refresh_authorization, select_resource_url,
+    TokenRequestOptions, discover_oauth_server_info, refresh_authorization,
+    resolve_authorization_callback_params, select_resource_url,
 };
 use rust_mcp_remote::node_oauth_client_provider::{CredentialScope, code_challenge_for};
 use serde_json::{Value, json};
@@ -626,4 +627,123 @@ async fn select_resource_url_takes_the_metadata_resource_only_when_it_covers_the
     assert!(error.to_string().contains("does not match"), "{error}");
     let error = select(Some(json!({}))).await.unwrap_err();
     assert_eq!(error.to_string(), "Invalid URL");
+}
+
+#[tokio::test]
+async fn resolve_authorization_callback_params_checks_iss_before_surfacing_an_error() {
+    let params = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect()
+    };
+    let unreachable = Url::parse("http://127.0.0.1:9/mcp").unwrap();
+    let provider = TestProvider::new();
+
+    // A code is returned as is, with no discovery.
+    assert_eq!(
+        resolve_authorization_callback_params(
+            &params(&[("code", "c-1"), ("iss", "https://as.example")]),
+            &provider,
+            &unreachable,
+            None,
+        )
+        .await
+        .unwrap(),
+        ("c-1".to_owned(), Some("https://as.example".to_owned()))
+    );
+
+    provider.store().discovery_state = Some(DiscoveryState {
+        authorization_server_url: "https://as.example".to_owned(),
+        resource_metadata_url: None,
+        resource_metadata: None,
+        authorization_server_metadata: Some(json!({
+            "issuer": "https://as.example",
+            "authorization_response_iss_parameter_supported": true,
+        })),
+    });
+    let resolve = |pairs: Vec<(String, String)>| {
+        let (provider, unreachable) = (&provider, &unreachable);
+        async move {
+            resolve_authorization_callback_params(&pairs, provider, unreachable, None)
+                .await
+                .unwrap_err()
+        }
+    };
+    let mismatch = |received: Option<&str>| AuthError::IssuerMismatch {
+        kind: IssuerMismatchKind::AuthorizationResponse,
+        expected: "https://as.example".to_owned(),
+        received: received.map(str::to_owned),
+    };
+
+    assert_eq!(
+        resolve(params(&[("code", ""), ("error", "access_denied")])).await,
+        mismatch(None)
+    );
+    assert_eq!(
+        resolve(params(&[
+            ("error", "access_denied"),
+            ("iss", "https://evil.example")
+        ]))
+        .await,
+        mismatch(Some("https://evil.example"))
+    );
+    assert_eq!(
+        resolve(params(&[
+            ("error", "access_denied"),
+            ("error_description", "User said no"),
+            ("error_uri", "https://as.example/help"),
+            ("iss", "https://as.example"),
+        ]))
+        .await,
+        AuthError::OAuth {
+            code: "access_denied".to_owned(),
+            message: "User said no".to_owned(),
+            error_uri: Some("https://as.example/help".to_owned()),
+        }
+    );
+    assert_eq!(
+        resolve(params(&[
+            ("error", "access_denied"),
+            ("iss", "https://as.example")
+        ]))
+        .await,
+        AuthError::OAuth {
+            code: "access_denied".to_owned(),
+            message: "access_denied".to_owned(),
+            error_uri: None,
+        }
+    );
+    assert_eq!(
+        resolve(params(&[("iss", "https://as.example")])).await,
+        AuthError::Unauthorized(
+            "Authorization callback contained neither `code` nor `error`".to_owned()
+        )
+    );
+}
+
+#[tokio::test]
+async fn resolve_authorization_callback_params_discovers_metadata_when_none_is_recorded() {
+    let error_params = vec![("error".to_owned(), "server_error".to_owned())];
+    let provider = TestProvider::new();
+
+    // Discovered metadata does not advertise the iss parameter, so a missing iss passes.
+    let (base, _requests) = auth_server(Arc::new(|_, _| None)).await;
+    let server = Url::parse(&format!("{base}/mcp")).unwrap();
+    let error = resolve_authorization_callback_params(&error_params, &provider, &server, None)
+        .await
+        .unwrap_err();
+    assert_eq!(error, AuthError::oauth("server_error", "server_error"));
+
+    let (base, _requests) = auth_server(Arc::new(|_, _| Some(reply(404, &[], "not found")))).await;
+    let server = Url::parse(&format!("{base}/mcp")).unwrap();
+    let error = resolve_authorization_callback_params(&error_params, &provider, &server, None)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error,
+        AuthError::Unauthorized(
+            "Authorization callback failed and the issuer could not be verified".to_owned()
+        )
+    );
 }
