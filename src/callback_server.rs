@@ -12,6 +12,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, oneshot, watch};
 
 use crate::logging::log;
+use crate::utils::lock;
 
 /// Endpoint secondary instances long-poll to await the auth flow the primary instance is running.
 pub const LONG_POLL_PATH: &str = "/wait-for-auth";
@@ -141,7 +142,7 @@ impl Drop for OAuthCallbackServer {
 
 impl OAuthCallbackServer {
     pub fn close(&self) {
-        let task = self.accept_task.lock().unwrap_or_else(|p| p.into_inner());
+        let task = lock(&self.accept_task);
         if let Some(task) = task.as_ref() {
             task.abort();
         }
@@ -150,11 +151,7 @@ impl OAuthCallbackServer {
     /// Stops accepting and waits until the listening socket is released, so the port can be
     /// bound again as soon as this returns (TS `server.close(callback)`).
     pub async fn shutdown(&self) {
-        let task = self
-            .accept_task
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .take();
+        let task = lock(&self.accept_task).take();
         if let Some(task) = task {
             task.abort();
             let _ = task.await;
@@ -203,7 +200,7 @@ impl AuthCodeWaiter {
 fn wait_for_auth_code(
     shared: &Arc<Shared>,
 ) -> impl std::future::Future<Output = Result<AuthCodeResult, String>> + Send + 'static {
-    let mut codes = shared.codes.lock().unwrap_or_else(|p| p.into_inner());
+    let mut codes = lock(&shared.codes);
     let registered = match codes.unclaimed.pop_front() {
         Some(code) => Err(code),
         None => {
@@ -230,7 +227,7 @@ fn wait_for_auth_code(
                 event = failures.recv() => match event {
                     Ok(AuthEvent::CodeFailed(message)) => {
                         // An authorization the user denied never produces a code
-                        let mut codes = shared.codes.lock().unwrap_or_else(|p| p.into_inner());
+                        let mut codes = lock(&shared.codes);
                         codes.waiting.retain(|(waiter, _)| *waiter != id);
                         drop(codes);
                         // The code may have been handed over just before the failure arrived
@@ -488,7 +485,7 @@ fn callback(
         }
     });
     // Hand it straight to whoever is waiting; hold it only if nobody is yet
-    let mut codes = shared.codes.lock().unwrap_or_else(|p| p.into_inner());
+    let mut codes = lock(&shared.codes);
     let mut pending = Some(received);
     while let Some((_, waiter)) = codes.waiting.pop_front() {
         match waiter.send(pending.take().expect("code still pending")) {

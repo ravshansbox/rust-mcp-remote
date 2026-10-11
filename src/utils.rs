@@ -93,15 +93,19 @@ pub fn set_cookies_enabled(enabled: bool) {
     COOKIES_ENABLED.store(enabled, Ordering::SeqCst);
 }
 
+/// Locks `mutex`, recovering the guard if another thread panicked while holding it.
+pub(crate) fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// `cookieHeaderFor`: the Cookie header the jar holds for `url`, if any.
 pub fn cookie_header_for(url: &str) -> Option<String> {
     if !COOKIES_ENABLED.load(Ordering::SeqCst) {
         return None;
     }
-    COOKIE_JAR
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .header(url)
+    lock(&COOKIE_JAR).header(url)
 }
 
 /// `captureCookies`: keeps the cookies a response for `url` sets.
@@ -115,10 +119,7 @@ pub fn capture_cookies(url: &str, response: &Response) {
         .iter()
         .filter_map(|value| value.to_str().ok())
         .collect();
-    COOKIE_JAR
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .capture(url, &set_cookies);
+    lock(&COOKIE_JAR).capture(url, &set_cookies);
 }
 
 fn set_header_if_absent(request: &mut Request, name: &'static str, value: &str) {

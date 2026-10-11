@@ -18,6 +18,7 @@ use crate::logging::log;
 use crate::protocol_era::{LATEST_PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS};
 use crate::stdio::TransportEvent;
 use crate::streamable_http::BoxFuture;
+use crate::utils::lock;
 
 /// `DEFAULT_REQUEST_TIMEOUT_MSEC`: how long a request waits for its answer.
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -115,14 +116,11 @@ struct Inner {
 
 impl Inner {
     fn hooks(&self) -> std::sync::MutexGuard<'_, Hooks> {
-        self.hooks.lock().unwrap_or_else(|p| p.into_inner())
+        lock(&self.hooks)
     }
 
     fn take_pending(&self, id: u64) -> Option<oneshot::Sender<Result<Value, McpError>>> {
-        self.pending
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(&id)
+        lock(&self.pending).remove(&id)
     }
 
     /// `_onclose`: fails every pending request and calls `onclose` once.
@@ -130,12 +128,7 @@ impl Inner {
         if self.closed.swap(true, Ordering::SeqCst) {
             return;
         }
-        let pending: Vec<_> = self
-            .pending
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .drain()
-            .collect();
+        let pending: Vec<_> = lock(&self.pending).drain().collect();
         for (_, waiter) in pending {
             let _ = waiter.send(Err(McpError::new(CONNECTION_CLOSED, "Connection closed")));
         }
@@ -250,11 +243,7 @@ impl Client {
                 ));
             }
             (client.inner.transport.set_protocol_version)(Some(negotiated.to_owned()));
-            *client
-                .inner
-                .server_info
-                .lock()
-                .unwrap_or_else(|p| p.into_inner()) = result.get("serverInfo").cloned();
+            *lock(&client.inner.server_info) = result.get("serverInfo").cloned();
             client
                 .notify("notifications/initialized", None)
                 .await
@@ -269,11 +258,7 @@ impl Client {
 
     /// `getServerVersion()`: the `serverInfo` the server answered `initialize` with.
     pub fn server_version(&self) -> Option<Value> {
-        self.inner
-            .server_info
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone()
+        lock(&self.inner.server_info).clone()
     }
 
     /// `client.request({method, params})` with the default timeout.
@@ -297,11 +282,7 @@ impl Client {
             message["params"] = params;
         }
         let (waiter, answer) = oneshot::channel();
-        self.inner
-            .pending
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .insert(id, waiter);
+        lock(&self.inner.pending).insert(id, waiter);
         if let Err(error) = (self.inner.transport.send)(message).await {
             self.inner.take_pending(id);
             return Err(McpError::new(CONNECTION_CLOSED, &error));

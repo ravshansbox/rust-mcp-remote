@@ -33,7 +33,7 @@ use crate::protocol_era::{
 use crate::stdio::{StdioServerTransport, TransportEvent};
 use crate::streamable_http::{StreamableHttpClientTransport, TransportError};
 use crate::utils::{
-    MCP_REMOTE_VERSION, has_id, id_key, ignored_tool_call_error, is_request, is_response,
+    MCP_REMOTE_VERSION, has_id, id_key, ignored_tool_call_error, is_request, is_response, lock,
     transform_proxy_response,
 };
 
@@ -291,12 +291,6 @@ impl SingleFlight {
         self.generation.fetch_add(1, Ordering::SeqCst);
         result
     }
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn is_own_id(id: &Value) -> bool {
