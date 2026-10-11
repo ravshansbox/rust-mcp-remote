@@ -3,9 +3,9 @@ use rust_mcp_remote::auth::{
     assert_secure_token_endpoint, build_discovery_urls, check_resource_allowed,
     compute_scope_union, derive_application_type, determine_scope, discard_if_issuer_mismatch,
     extract_field_from_www_auth, extract_www_authenticate_params, is_https_url,
-    is_strict_scope_superset, issuers_match, parse_error_response, parse_oauth_metadata,
-    parse_tokens, pkce_challenge, resource_url_from_server_url, start_authorization,
-    validate_authorization_response_issuer,
+    is_strict_scope_superset, issuers_match, parse_client_information_full, parse_error_response,
+    parse_oauth_metadata, parse_protected_resource_metadata, parse_tokens, pkce_challenge,
+    resource_url_from_server_url, start_authorization, validate_authorization_response_issuer,
 };
 use rust_mcp_remote::node_oauth_client_provider::code_challenge_for;
 use serde_json::json;
@@ -278,6 +278,57 @@ fn oauth_metadata_keeps_unknown_fields_and_drops_a_non_boolean_iss_flag() {
         }))
         .is_err()
     );
+}
+
+#[test]
+fn protected_resource_metadata_requires_a_resource_url_and_safe_servers() {
+    let metadata = parse_protected_resource_metadata(&json!({
+        "resource": "https://api.example/mcp",
+        "authorization_servers": ["https://as.example"], "custom": true
+    }))
+    .unwrap();
+    assert_eq!(metadata["custom"], true);
+    for invalid in [
+        json!({"authorization_servers": ["https://as.example"]}),
+        json!({"resource": "not a url"}),
+        json!({"resource": "https://api.example", "authorization_servers": ["data:text/plain,x"]}),
+        json!({"resource": "https://api.example", "scopes_supported": "read"}),
+        json!(["https://api.example"]),
+    ] {
+        assert!(
+            parse_protected_resource_metadata(&invalid).is_err(),
+            "{invalid}"
+        );
+    }
+}
+
+#[test]
+fn client_information_drops_issuer_unknown_fields_and_empty_optional_urls() {
+    let information = parse_client_information_full(&json!({
+        "redirect_uris": ["http://localhost:3334/oauth/callback"],
+        "client_id": "abc", "issuer": "https://as", "custom": 1,
+        "logo_uri": "", "tos_uri": "", "client_id_issued_at": 1700000000
+    }))
+    .unwrap();
+    assert_eq!(
+        information,
+        json!({
+            "redirect_uris": ["http://localhost:3334/oauth/callback"],
+            "client_id": "abc", "client_id_issued_at": 1700000000
+        })
+    );
+    for invalid in [
+        json!({"redirect_uris": ["http://localhost/cb"]}),
+        json!({"client_id": "abc"}),
+        json!({"redirect_uris": ["javascript:alert(1)"], "client_id": "abc"}),
+        json!({"redirect_uris": ["http://localhost/cb"], "client_id": "abc", "logo_uri": "nope"}),
+        json!({"redirect_uris": ["http://localhost/cb"], "client_id": "abc", "client_secret_expires_at": "0"}),
+    ] {
+        assert!(
+            parse_client_information_full(&invalid).is_err(),
+            "{invalid}"
+        );
+    }
 }
 
 #[test]
