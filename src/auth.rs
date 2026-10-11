@@ -13,7 +13,7 @@ use serde_json::{Map, Value, json};
 use url::Url;
 
 use crate::device_authorization::{apply_client_authentication, select_client_auth_method};
-use crate::node_oauth_client_provider::CredentialScope;
+use crate::node_oauth_client_provider::{CredentialScope, set_search_param};
 use crate::protocol_era::LATEST_PROTOCOL_VERSION;
 use crate::streamable_http::{self, FetchFn, default_fetch};
 
@@ -1655,24 +1655,6 @@ pub fn pkce_challenge() -> Result<(String, String), AuthError> {
         .collect();
     let challenge = crate::node_oauth_client_provider::code_challenge_for(&verifier);
     Ok((verifier, challenge))
-}
-
-/// URLSearchParams.set: replaces the first `name` and drops the rest, or appends.
-fn set_search_param(url: &mut Url, name: &str, value: &str) {
-    let mut pairs: Vec<(String, String)> = url.query_pairs().into_owned().collect();
-    match pairs.iter().position(|(key, _)| key == name) {
-        Some(index) => {
-            pairs[index].1 = value.to_owned();
-            let mut position = 0;
-            pairs.retain(|(key, _)| {
-                let keep = position <= index || key != name;
-                position += 1;
-                keep
-            });
-        }
-        None => pairs.push((name.to_owned(), value.to_owned())),
-    }
-    url.query_pairs_mut().clear().extend_pairs(pairs);
 }
 
 pub struct StartAuthorizationOptions<'a> {

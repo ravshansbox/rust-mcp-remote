@@ -450,7 +450,8 @@ pub fn tokens_to_save(tokens: &Value, effective_scope: &str, now_ms: f64) -> Val
     Value::Object(saved)
 }
 
-fn set_search_param(url: &mut Url, key: &str, value: &str) {
+/// URLSearchParams.set: replaces the first `key` and drops the rest, or appends.
+pub(crate) fn set_search_param(url: &mut Url, key: &str, value: &str) {
     let mut found = false;
     let pairs: Vec<(String, String)> = url
         .query_pairs()
