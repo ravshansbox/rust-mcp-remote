@@ -2,6 +2,7 @@
 
 mod explicit_client_credentials;
 mod flow;
+mod metadata;
 #[allow(dead_code)]
 #[path = "../streamable_http/test_server.rs"]
 mod test_server;
