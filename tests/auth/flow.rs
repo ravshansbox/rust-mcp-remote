@@ -3,9 +3,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use rust_mcp_remote::auth::{
     AuthError, AuthOptions, AuthResult, DiscoveryState, FetchTokenOptions, IssuerMismatchKind,
     OAuthClientProvider, TokenRequestOptions, discover_authorization_server_metadata,
-    discover_oauth_server_info, exchange_authorization, execute_token_request, fetch_token,
-    refresh_authorization, register_client, resolve_authorization_callback_params,
-    resolve_client_metadata, select_resource_url,
+    discover_oauth_protected_resource_metadata, discover_oauth_server_info, exchange_authorization,
+    execute_token_request, fetch_token, refresh_authorization, register_client,
+    resolve_authorization_callback_params, resolve_client_metadata, select_resource_url,
 };
 use rust_mcp_remote::node_oauth_client_provider::{CredentialScope, code_challenge_for};
 use serde_json::{Value, json};
@@ -1270,4 +1270,81 @@ async fn discover_authorization_server_metadata_walks_the_well_known_urls() {
         .unwrap()
         .unwrap();
     assert_eq!(metadata["issuer"], "https://evil.example");
+}
+
+/// Serves protected resource metadata for `{base}/mcp`: `status_for` picks each path's status.
+async fn resource_discovery(
+    status_for: fn(&str) -> u16,
+) -> (String, UnboundedReceiver<RecordedRequest>) {
+    let base = Arc::new(OnceLock::<String>::new());
+    let handler_base = Arc::clone(&base);
+    let (url, requests) = serve(Arc::new(move |request: &RecordedRequest| {
+        let base = handler_base.get().cloned().unwrap_or_default();
+        let status = status_for(&request.path);
+        if status != 200 {
+            return reply(status, &[], "");
+        }
+        reply(
+            200,
+            &[JSON],
+            &json!({ "resource": format!("{base}/mcp"), "authorization_servers": [base] })
+                .to_string(),
+        )
+    }))
+    .await;
+    base.set(url.clone()).unwrap();
+    (url, requests)
+}
+
+#[tokio::test]
+async fn discover_oauth_protected_resource_metadata_falls_back_to_the_root_and_names_failures() {
+    // A 4xx on the path-suffixed URL (query kept) falls back to the root well-known URL.
+    let (base, mut requests) = resource_discovery(|path| {
+        if path == "/.well-known/oauth-protected-resource" {
+            200
+        } else {
+            404
+        }
+    })
+    .await;
+    let server = Url::parse(&format!("{base}/mcp?tenant=a")).unwrap();
+    let metadata =
+        discover_oauth_protected_resource_metadata(&server, None, Some("2025-06-18"), None)
+            .await
+            .unwrap();
+    assert_eq!(metadata["resource"], json!(format!("{base}/mcp")));
+    let seen = drain(&mut requests);
+    let paths: Vec<&str> = seen.iter().map(|r| r.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        [
+            "/.well-known/oauth-protected-resource/mcp?tenant=a",
+            "/.well-known/oauth-protected-resource",
+        ]
+    );
+    assert!(
+        seen.iter()
+            .all(|r| r.header("mcp-protocol-version") == Some("2025-06-18"))
+    );
+
+    // An explicit metadata URL is the only one tried, and a 404 there means no support.
+    let explicit = Url::parse(&format!("{base}/custom")).unwrap();
+    assert_eq!(
+        discover_oauth_protected_resource_metadata(&server, Some(&explicit), None, None).await,
+        Err(AuthError::Other(
+            "Resource server does not implement OAuth 2.0 Protected Resource Metadata.".to_owned()
+        ))
+    );
+    assert_eq!(drain(&mut requests).len(), 1);
+
+    // A 5xx other than 502 does not fall back and names the status.
+    let (base, mut requests) = resource_discovery(|_| 500).await;
+    let server = Url::parse(&format!("{base}/mcp")).unwrap();
+    assert_eq!(
+        discover_oauth_protected_resource_metadata(&server, None, None, None).await,
+        Err(AuthError::Other(
+            "HTTP 500 trying to load well-known OAuth protected resource metadata.".to_owned()
+        ))
+    );
+    assert_eq!(drain(&mut requests).len(), 1);
 }
