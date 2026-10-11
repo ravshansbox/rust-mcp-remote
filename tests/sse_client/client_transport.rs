@@ -404,3 +404,70 @@ async fn a_second_start_is_refused() {
     );
     transport.close();
 }
+
+#[tokio::test]
+async fn finish_auth_fails_without_a_provider_and_when_the_sign_in_is_not_authorized() {
+    let (without_provider, _events) = transport("http://127.0.0.1:9", SseClientOptions::default());
+    let error = without_provider.finish_auth("code-1").await.unwrap_err();
+    assert_eq!(error.to_string(), "No auth provider");
+
+    let oauth = FakeOauth::new(None, AuthResult::Redirect);
+    let (transport, _events) = transport(
+        "http://127.0.0.1:9",
+        SseClientOptions {
+            oauth: Some(Arc::new(Oauth(Arc::clone(&oauth)))),
+            ..SseClientOptions::default()
+        },
+    );
+    let error = transport.finish_auth("code-1").await.unwrap_err();
+    assert_eq!(error.to_string(), "Failed to authorize");
+    let calls = oauth.calls.lock().unwrap().clone();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].authorization_code.as_deref(), Some("code-1"));
+}
+
+#[tokio::test]
+async fn a_configured_authorization_header_replaces_the_bearer_token() {
+    let streams = Streams::default();
+    let handler_streams = streams.clone();
+    let (base, mut requests) = serve(Arc::new(move |_: &Recorded| {
+        handler_streams.open(ENDPOINT_EVENT)
+    }))
+    .await;
+    let oauth = FakeOauth::new(Some("at-0"), AuthResult::Authorized);
+    let (transport, _events) = transport(
+        &base,
+        SseClientOptions {
+            headers: vec![("authorization".to_owned(), "Bearer custom".to_owned())],
+            oauth: Some(Arc::new(Oauth(oauth))),
+            ..SseClientOptions::default()
+        },
+    );
+
+    transport.start().await.unwrap();
+    let get = requests.recv().await.unwrap();
+    assert_eq!(get.header("authorization"), Some("Bearer custom"));
+    transport.close();
+}
+
+#[tokio::test]
+async fn closing_twice_reports_close_once() {
+    let streams = Streams::default();
+    let handler_streams = streams.clone();
+    let (base, _requests) = serve(Arc::new(move |_: &Recorded| {
+        handler_streams.open(ENDPOINT_EVENT)
+    }))
+    .await;
+    let (transport, mut events) = transport(&base, SseClientOptions::default());
+    transport.start().await.unwrap();
+
+    transport.close();
+    transport.close();
+    assert!(transport.is_closed());
+    assert!(matches!(
+        next_event(&mut events).await,
+        TransportEvent::Close
+    ));
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(events.try_recv().is_err());
+}
