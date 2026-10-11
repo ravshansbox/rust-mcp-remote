@@ -32,7 +32,10 @@ use crate::protocol_era::{
 };
 use crate::stdio::{StdioServerTransport, TransportEvent};
 use crate::streamable_http::{StreamableHttpClientTransport, TransportError};
-use crate::utils::{MCP_REMOTE_VERSION, ignored_tool_call_error, transform_proxy_response};
+use crate::utils::{
+    MCP_REMOTE_VERSION, has_id, id_key, ignored_tool_call_error, is_request, is_response,
+    transform_proxy_response,
+};
 
 pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
@@ -298,23 +301,6 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 fn is_own_id(id: &Value) -> bool {
     id.as_str().is_some_and(|id| id.starts_with(OWN_ID_PREFIX))
-}
-
-fn has_id(message: &Value) -> bool {
-    message.get("id").is_some_and(|id| !id.is_null())
-}
-
-fn is_request(message: &Value) -> bool {
-    has_id(message) && message.get("method").is_some()
-}
-
-fn is_response(message: &Value) -> bool {
-    has_id(message) && message.get("method").is_none()
-}
-
-/// Map key for a JSON-RPC id; keeps `1` and `"1"` apart, as a JS Map does.
-fn id_key(id: &Value) -> String {
-    id.to_string()
 }
 
 /// `message.method || message.id`, as the `[Local→Remote]` log lines print it.

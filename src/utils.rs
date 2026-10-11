@@ -1451,19 +1451,20 @@ pub struct MessageTransformer {
     transform_response_function: Option<ResponseTransform>,
 }
 
-fn has_id(message: &serde_json::Value) -> bool {
+pub(crate) fn has_id(message: &serde_json::Value) -> bool {
     message.get("id").is_some_and(|id| !id.is_null())
 }
 
-fn is_request(message: &serde_json::Value) -> bool {
+pub(crate) fn is_request(message: &serde_json::Value) -> bool {
     has_id(message) && message.get("method").is_some()
 }
 
-fn is_response(message: &serde_json::Value) -> bool {
+pub(crate) fn is_response(message: &serde_json::Value) -> bool {
     has_id(message) && message.get("method").is_none()
 }
 
-fn pending_key(id: &serde_json::Value) -> String {
+/// Map key for a JSON-RPC id; keeps `1` and `"1"` apart, as a JS Map does.
+pub(crate) fn id_key(id: &serde_json::Value) -> String {
     id.to_string()
 }
 
@@ -1509,7 +1510,7 @@ impl MessageTransformer {
             return Some(message);
         }
         self.pending_requests
-            .insert(pending_key(&message["id"]), message.clone());
+            .insert(id_key(&message["id"]), message.clone());
         let Some(transform) = self.transform_request_function.as_mut() else {
             return Some(message);
         };
@@ -1530,8 +1531,7 @@ impl MessageTransformer {
         if !is_response(&message) {
             return message;
         }
-        let Some(original_request) = self.pending_requests.remove(&pending_key(&message["id"]))
-        else {
+        let Some(original_request) = self.pending_requests.remove(&id_key(&message["id"])) else {
             return message;
         };
         let Some(transform) = self.transform_response_function.as_mut() else {
@@ -1547,7 +1547,7 @@ impl MessageTransformer {
     }
 
     pub fn release(&mut self, id: &serde_json::Value, only: Option<&serde_json::Value>) {
-        let key = pending_key(id);
+        let key = id_key(id);
         if let Some(only) = only
             && self.pending_requests.get(&key) != Some(only)
         {
