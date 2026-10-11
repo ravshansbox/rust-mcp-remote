@@ -4,7 +4,7 @@ use rust_mcp_remote::auth::{
     AuthError, AuthOptions, AuthResult, DiscoveryState, FetchTokenOptions, IssuerMismatchKind,
     OAuthClientProvider, TokenRequestOptions, discover_oauth_server_info, exchange_authorization,
     execute_token_request, fetch_token, refresh_authorization, register_client,
-    resolve_authorization_callback_params, select_resource_url,
+    resolve_authorization_callback_params, resolve_client_metadata, select_resource_url,
 };
 use rust_mcp_remote::node_oauth_client_provider::{CredentialScope, code_challenge_for};
 use serde_json::{Value, json};
@@ -32,6 +32,9 @@ struct TestProvider {
     persist_discovery_state: bool,
     /// When set, the provider overrides `validate_resource_url` and returns this.
     resource_override: Option<Option<Url>>,
+    /// When set, replaces the default redirect URL and client metadata.
+    redirect_url: Option<Option<String>>,
+    client_metadata: Option<Value>,
 }
 
 impl TestProvider {
@@ -40,6 +43,8 @@ impl TestProvider {
             store: Mutex::new(Store::default()),
             persist_discovery_state: true,
             resource_override: None,
+            redirect_url: None,
+            client_metadata: None,
         }
     }
 
@@ -50,14 +55,18 @@ impl TestProvider {
 
 impl OAuthClientProvider for TestProvider {
     fn redirect_url(&self) -> Option<String> {
-        Some("http://localhost:3334/oauth/callback".to_owned())
+        self.redirect_url
+            .clone()
+            .unwrap_or_else(|| Some("http://localhost:3334/oauth/callback".to_owned()))
     }
 
     fn client_metadata(&self) -> Value {
-        json!({
-            "redirect_uris": ["http://localhost:3334/oauth/callback"],
-            "client_name": "test",
-            "token_endpoint_auth_method": "none",
+        self.client_metadata.clone().unwrap_or_else(|| {
+            json!({
+                "redirect_uris": ["http://localhost:3334/oauth/callback"],
+                "client_name": "test",
+                "token_endpoint_auth_method": "none",
+            })
         })
     }
 
@@ -1114,4 +1123,43 @@ async fn resolve_authorization_callback_params_discovers_metadata_when_none_is_r
             "Authorization callback failed and the issuer could not be verified".to_owned()
         )
     );
+}
+
+#[test]
+fn resolve_client_metadata_fills_only_missing_grant_types_and_application_type() {
+    // Interactive: the SDK defaults, with a loopback redirect making it native.
+    let metadata = resolve_client_metadata(&TestProvider::new());
+    assert_eq!(
+        metadata["grant_types"],
+        json!(["authorization_code", "refresh_token"])
+    );
+    assert_eq!(metadata["application_type"], "native");
+
+    // Without a redirect URL a null grant_types is dropped, and https redirects are web.
+    let provider = TestProvider {
+        redirect_url: Some(None),
+        client_metadata: Some(json!({
+            "redirect_uris": ["https://app.example/cb"],
+            "grant_types": null,
+            "application_type": null,
+        })),
+        ..TestProvider::new()
+    };
+    let metadata = resolve_client_metadata(&provider);
+    assert!(metadata.get("grant_types").is_none());
+    assert_eq!(metadata["application_type"], "web");
+
+    // Values the provider sets are kept as they are.
+    let provider = TestProvider {
+        redirect_url: Some(None),
+        client_metadata: Some(json!({
+            "redirect_uris": ["http://localhost:1/cb"],
+            "grant_types": ["client_credentials"],
+            "application_type": "web",
+        })),
+        ..TestProvider::new()
+    };
+    let metadata = resolve_client_metadata(&provider);
+    assert_eq!(metadata["grant_types"], json!(["client_credentials"]));
+    assert_eq!(metadata["application_type"], "web");
 }
