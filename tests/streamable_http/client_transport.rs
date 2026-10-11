@@ -731,6 +731,29 @@ async fn within_timeout_gives_up_only_on_an_enabled_timeout() {
 }
 
 #[tokio::test]
+async fn send_failure_details_a_request_error_with_its_whole_cause_chain() {
+    assert_eq!(
+        SendFailure::HeadersTimeout.to_string(),
+        "Headers Timeout Error"
+    );
+    assert_eq!(
+        SendFailure::HeadersTimeout.detailed(),
+        "Headers Timeout Error"
+    );
+
+    let client = reqwest::Client::new();
+    let error = client.get("http://127.0.0.1:1/").send().await.unwrap_err();
+    let summary = error.to_string();
+    let expected = fetch_error(client.get("http://127.0.0.1:1/").send().await.unwrap_err());
+    let failure = SendFailure::Request(error);
+    assert_eq!(failure.to_string(), summary);
+    let detailed = failure.detailed();
+    assert_eq!(detailed, expected);
+    assert!(detailed.len() > summary.len());
+    assert!(detailed.starts_with(&format!("{summary}: ")));
+}
+
+#[tokio::test]
 async fn only_the_redirect_following_client_follows_redirects() {
     let (url, _requests) = serve(Arc::new(|request: &RecordedRequest| {
         if request.path == "/moved" {
