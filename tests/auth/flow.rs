@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use rust_mcp_remote::auth::{
     AuthError, AuthOptions, AuthResult, DiscoveryState, IssuerMismatchKind, OAuthClientProvider,
-    TokenRequestOptions, discover_oauth_server_info, refresh_authorization,
+    TokenRequestOptions, discover_oauth_server_info, refresh_authorization, select_resource_url,
 };
 use rust_mcp_remote::node_oauth_client_provider::{CredentialScope, code_challenge_for};
 use serde_json::{Value, json};
@@ -579,4 +579,51 @@ async fn token_requests_refuse_plain_http_off_loopback() {
         error,
         AuthError::InsecureTokenEndpoint("http://as.example/token".to_owned())
     );
+}
+
+#[tokio::test]
+async fn select_resource_url_takes_the_metadata_resource_only_when_it_covers_the_server() {
+    let provider = TestProvider::new();
+    let server = Url::parse("https://api.example/mcp/v1#frag").unwrap();
+    let select = |metadata: Option<Value>| {
+        let (server, provider) = (&server, &provider);
+        async move {
+            select_resource_url(server, provider, metadata.as_ref())
+                .await
+                .map(|resource| resource.map(String::from))
+        }
+    };
+
+    assert_eq!(select(None).await.unwrap(), None);
+    assert_eq!(
+        select(Some(json!({"resource": "https://api.example/mcp"})))
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("https://api.example/mcp")
+    );
+    assert_eq!(
+        select(Some(json!({"resource": "https://api.example/"})))
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("https://api.example/")
+    );
+
+    let error = select(Some(json!({"resource": "https://api.example/other"})))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains(
+            "https://api.example/other does not match expected https://api.example/mcp/v1"
+        ),
+        "{error}"
+    );
+    let error = select(Some(json!({"resource": "https://other.example/mcp"})))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("does not match"), "{error}");
+    let error = select(Some(json!({}))).await.unwrap_err();
+    assert_eq!(error.to_string(), "Invalid URL");
 }
