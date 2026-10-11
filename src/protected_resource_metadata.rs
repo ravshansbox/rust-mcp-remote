@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use url::{ParseError, Url};
 
 use crate::logging::debug_log;
+use crate::utils::is_truthy;
 
 const PROTECTED_RESOURCE_PATH: &str = "/.well-known/oauth-protected-resource";
 
@@ -136,17 +137,6 @@ pub fn authorization_server_url_of(metadata: &Value) -> Option<&str> {
         .as_array()?
         .first()?
         .as_str()
-}
-
-/// JavaScript truthiness, which decides whether a fetched document counts as found.
-fn is_truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(flag) => *flag,
-        Value::Number(number) => number.as_f64().is_some_and(|n| n != 0.0),
-        Value::String(text) => !text.is_empty(),
-        Value::Array(_) | Value::Object(_) => true,
-    }
 }
 
 async fn fetch_protected_resource_metadata_from_url(metadata_url: &str) -> Option<Value> {

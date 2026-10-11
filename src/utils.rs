@@ -1463,6 +1463,17 @@ pub(crate) fn is_response(message: &serde_json::Value) -> bool {
     has_id(message) && message.get("method").is_none()
 }
 
+/// JavaScript truthiness of a JSON value.
+pub(crate) fn is_truthy(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => false,
+        serde_json::Value::Bool(flag) => *flag,
+        serde_json::Value::Number(number) => number.as_f64().is_some_and(|n| n != 0.0),
+        serde_json::Value::String(text) => !text.is_empty(),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => true,
+    }
+}
+
 /// Map key for a JSON-RPC id; keeps `1` and `"1"` apart, as a JS Map does.
 pub(crate) fn id_key(id: &serde_json::Value) -> String {
     id.to_string()

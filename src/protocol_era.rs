@@ -1,5 +1,7 @@
 use serde_json::{Map, Value, json};
 
+use crate::utils::is_truthy;
+
 pub fn local_answer_for(method: &str) -> Option<Value> {
     match method {
         "ping" | "resources/subscribe" | "resources/unsubscribe" | "logging/setLevel" => {
@@ -93,26 +95,15 @@ pub const MAX_INPUT_REQUIRED_ROUNDS: usize = 10;
 
 pub const MAX_INPUT_REQUESTS_PER_ROUND: usize = 8;
 
-fn is_truthy(value: Option<&Value>) -> bool {
-    match value {
-        None | Some(Value::Null) => false,
-        Some(Value::Bool(flag)) => *flag,
-        Some(Value::Number(number)) => number.as_f64().is_some_and(|number| number != 0.0),
-        Some(Value::String(text)) => !text.is_empty(),
-        Some(Value::Array(_) | Value::Object(_)) => true,
-    }
-}
-
 pub fn subscription_filter_for(
     capabilities: Option<&Map<String, Value>>,
     resource_subscriptions: &[String],
 ) -> Option<Value> {
     let announces_changes = |capability: &str| {
-        is_truthy(
-            capabilities
-                .and_then(|capabilities| capabilities.get(capability))
-                .and_then(|capability| capability.get("listChanged")),
-        )
+        capabilities
+            .and_then(|capabilities| capabilities.get(capability))
+            .and_then(|capability| capability.get("listChanged"))
+            .is_some_and(is_truthy)
     };
 
     let mut filter = Map::new();
@@ -156,7 +147,7 @@ pub fn unacknowledged_subscriptions(
                     .as_array()
                     .is_some_and(|asked| asked.iter().any(|uri| !got.contains(uri)));
             }
-            !is_truthy(granted.get(key.as_str()))
+            !granted.get(key.as_str()).is_some_and(is_truthy)
         })
         .map(|(key, _)| key.clone())
         .collect()
@@ -334,7 +325,7 @@ pub enum EraVerdict {
 const MODERN_ERROR_CODES: [i64; 1] = [-32022];
 
 pub fn read_era_from_discover_response(message: &Value) -> EraVerdict {
-    if let Some(error) = message.get("error").filter(|error| is_truthy(Some(error))) {
+    if let Some(error) = message.get("error").filter(|error| is_truthy(error)) {
         let code = error.get("code");
         if !code
             .and_then(Value::as_i64)
@@ -526,7 +517,7 @@ pub fn synthesize_initialize_result(discover: &Value, identity: &LegacyClientIde
         .get("_meta")
         .and_then(|meta| meta.get(SERVER_INFO_META_KEY));
     let server_info = match advertised {
-        Some(advertised) if is_truthy(advertised.get("name")) => advertised.clone(),
+        Some(advertised) if advertised.get("name").is_some_and(is_truthy) => advertised.clone(),
         _ => json!({ "name": "remote MCP server", "version": FIRST_MODERN_PROTOCOL_VERSION }),
     };
 
@@ -539,7 +530,7 @@ pub fn synthesize_initialize_result(discover: &Value, identity: &LegacyClientIde
     result.insert("protocolVersion".to_string(), json!(protocol_version));
     result.insert("capabilities".to_string(), capabilities);
     result.insert("serverInfo".to_string(), server_info);
-    if is_truthy(discover.get("instructions")) {
+    if discover.get("instructions").is_some_and(is_truthy) {
         result.insert("instructions".to_string(), discover["instructions"].clone());
     }
     Value::Object(result)
