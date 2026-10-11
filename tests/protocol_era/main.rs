@@ -7,6 +7,7 @@ mod discover;
 mod initialize;
 mod meta;
 mod predicates;
+mod probe;
 mod protocol_era;
 mod subscriptions;
 mod verdict;
