@@ -144,3 +144,44 @@ async fn a_request_that_times_out_is_cancelled() {
     assert_eq!(cancelled["method"], "notifications/cancelled");
     assert_eq!(cancelled["params"]["requestId"], request["id"]);
 }
+
+#[tokio::test]
+async fn a_notification_carries_no_id_and_only_the_params_it_was_given() {
+    let mut pair = connected_pair(tools_server()).await;
+    let client = pair.client.unwrap();
+    pair.sent.recv().await.unwrap();
+    pair.sent.recv().await.unwrap();
+
+    client.notify("notifications/progress", None).await.unwrap();
+    client
+        .notify("notifications/message", Some(json!({"level": "info"})))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        pair.sent.recv().await.unwrap(),
+        json!({"jsonrpc": "2.0", "method": "notifications/progress"})
+    );
+    assert_eq!(
+        pair.sent.recv().await.unwrap(),
+        json!({"jsonrpc": "2.0", "method": "notifications/message", "params": {"level": "info"}})
+    );
+}
+
+#[tokio::test]
+async fn a_transport_error_reaches_the_error_hook_without_closing_the_client() {
+    let pair = connected_pair(tools_server()).await;
+    let client = pair.client.unwrap();
+    let (errors_tx, mut errors) = tokio::sync::mpsc::unbounded_channel();
+    client.set_on_error(move |error| {
+        let _ = errors_tx.send(error.to_owned());
+    });
+
+    pair.server
+        .send(TransportEvent::Error("stream reset".to_owned()))
+        .unwrap();
+
+    assert_eq!(errors.recv().await.unwrap(), "stream reset");
+    assert!(!client.is_closed());
+    assert!(client.request("tools/list", None).await.is_ok());
+}
