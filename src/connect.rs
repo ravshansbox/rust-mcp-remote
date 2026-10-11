@@ -29,7 +29,9 @@ use crate::streamable_http::{
     BoxFuture, FetchFn, StreamableHttpClientTransport, StreamableHttpOptions, TransportError,
     TransportOAuth, default_fetch,
 };
-use crate::utils::{TransportStrategy, capture_cookies, cookie_header_for, fetch_with_mcp_headers};
+use crate::utils::{
+    TransportStrategy, capture_cookies, cookie_header_for, fetch_with_mcp_headers, lock,
+};
 
 const REASON_AUTH_NEEDED: &str = "authentication-needed";
 const REASON_TRANSPORT_FALLBACK: &str = "falling-back-to-alternate-transport";
@@ -198,10 +200,7 @@ fn event_source_fetch(on_stream_reconnect: StreamReconnectHook) -> FetchFn {
             capture_cookies(&url, &response);
             if response.status().is_success() && opened.fetch_add(1, Ordering::SeqCst) >= 1 {
                 log("Remote SSE stream reconnected", &[]);
-                let hook = on_stream_reconnect
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .clone();
+                let hook = lock(&on_stream_reconnect).clone();
                 if let Some(hook) = hook {
                     hook();
                 }
@@ -454,7 +453,7 @@ async fn connect_client(
             Box::pin(async move {
                 sender.send(&message).await.map_err(|error| {
                     let message = error.to_string();
-                    *recorded.lock().unwrap_or_else(|p| p.into_inner()) = Some(error);
+                    *lock(&recorded) = Some(error);
                     message
                 })
             })
@@ -465,9 +464,7 @@ async fn connect_client(
     Client::connect(identity.name, identity.version, client_transport, events)
         .await
         .map_err(|error| {
-            failed_send
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
+            lock(&failed_send)
                 .take()
                 .unwrap_or_else(|| TransportError::Other(error.to_string()))
         })

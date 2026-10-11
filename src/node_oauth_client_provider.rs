@@ -16,7 +16,7 @@ use crate::mcp_auth_config::{
     acquire_config_lease, delete_config_file, delete_stale_config_files, read_config_lease,
     read_json_file, read_text_file, release_config_lease, write_json_file, write_text_file,
 };
-use crate::utils::{MCP_REMOTE_VERSION, build_redirect_url};
+use crate::utils::{MCP_REMOTE_VERSION, build_redirect_url, lock};
 
 const URL_SAFE_ANY_PADDING: GeneralPurpose = GeneralPurpose::new(
     &alphabet::URL_SAFE,
@@ -1277,10 +1277,7 @@ impl NodeOAuthClientProvider {
         do_refresh_tokens: impl FnOnce(&str) -> Option<Value>,
     ) -> Option<Value> {
         let (attempt, is_leader) = {
-            let mut in_flight = self
-                .refresh_in_flight
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut in_flight = lock(&self.refresh_in_flight);
             match in_flight.as_ref() {
                 Some(attempt) => (attempt.clone(), false),
                 None => {
@@ -1297,10 +1294,7 @@ impl NodeOAuthClientProvider {
 
         let result = self.refresh_once_per_host(refresh_token, do_refresh_tokens);
         let _ = attempt.set(result.clone());
-        *self
-            .refresh_in_flight
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        *lock(&self.refresh_in_flight) = None;
         result
     }
 
@@ -1310,10 +1304,7 @@ impl NodeOAuthClientProvider {
         auth: impl FnOnce(&str, Option<&str>) -> Result<(), String>,
     ) -> Result<(), String> {
         let (attempt, is_leader) = {
-            let mut in_flight = self
-                .client_credentials_in_flight
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut in_flight = lock(&self.client_credentials_in_flight);
             match in_flight.as_ref() {
                 Some(attempt) => (attempt.clone(), false),
                 None => {
@@ -1330,10 +1321,7 @@ impl NodeOAuthClientProvider {
 
         let result = auth(self.resource_server_url(), scope);
         let _ = attempt.set(result.clone());
-        *self
-            .client_credentials_in_flight
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        *lock(&self.client_credentials_in_flight) = None;
         result
     }
 

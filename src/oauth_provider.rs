@@ -32,6 +32,7 @@ use crate::node_oauth_client_provider::{
 };
 use crate::open_browser::{open_browser, sanitize_url};
 use crate::streamable_http::{FetchFn, default_client};
+use crate::utils;
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 type InFlight<T> = Mutex<Option<Arc<OnceCell<T>>>>;
@@ -75,9 +76,7 @@ impl OAuthProvider {
 
     /// The synchronous provider. Never hold this across an await.
     pub fn lock(&self) -> MutexGuard<'_, NodeOAuthClientProvider> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        utils::lock(&self.inner)
     }
 
     pub fn set_callback_port(&self, port: u16) {
@@ -118,13 +117,13 @@ impl OAuthProvider {
         attempt: impl Future<Output = T>,
     ) -> T {
         let cell = {
-            let mut in_flight = slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut in_flight = utils::lock(slot);
             in_flight
                 .get_or_insert_with(|| Arc::new(OnceCell::new()))
                 .clone()
         };
         let result = cell.get_or_init(|| attempt).await.clone();
-        let mut in_flight = slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut in_flight = utils::lock(slot);
         if in_flight
             .as_ref()
             .is_some_and(|current| Arc::ptr_eq(current, &cell))
@@ -401,10 +400,7 @@ async fn fetch_and_cache_metadata(
             &[json!({ "scopes_supported": scopes_supported })],
         );
     }
-    inner
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .authorization_server_metadata = metadata.clone();
+    utils::lock(inner).authorization_server_metadata = metadata.clone();
     metadata
 }
 
