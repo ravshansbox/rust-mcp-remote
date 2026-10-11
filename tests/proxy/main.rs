@@ -14,6 +14,7 @@ use tokio::sync::mpsc;
 
 mod era_bridging;
 mod input_required;
+mod send_error;
 mod stream_reconnect;
 mod subscription;
 
