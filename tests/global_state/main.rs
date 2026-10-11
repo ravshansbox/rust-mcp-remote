@@ -11,6 +11,7 @@ mod mcp_auth_config_lease_acquire;
 #[allow(dead_code)]
 mod test_server;
 mod utils_announce_server_url;
+mod utils_capture_cookies;
 mod utils_fetch_with_mcp_headers;
 mod utils_parse_command_line_args;
 mod utils_parse_debug_and_silent_flags;
