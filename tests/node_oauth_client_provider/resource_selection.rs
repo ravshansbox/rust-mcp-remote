@@ -33,7 +33,11 @@ fn an_authorize_resource_is_used_as_the_fixed_resource() {
 
 #[test]
 fn an_invalid_authorize_resource_is_an_error() {
-    assert!(resource_selection(false, Some("not a url"), false).is_err());
+    let error = resource_selection(false, Some("not a url"), false).unwrap_err();
+    assert!(
+        error.starts_with("Invalid URL: not a url: "),
+        "unexpected error: {error}"
+    );
 }
 
 #[test]

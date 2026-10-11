@@ -729,6 +729,11 @@ impl ResourceSelection {
     }
 }
 
+/// Parses `url`, naming it in the error like the TS `new URL(..)` failure.
+fn parse_url(url: &str) -> Result<Url, String> {
+    Url::parse(url).map_err(|error| format!("Invalid URL: {url}: {error}"))
+}
+
 fn resource_allowed(requested_resource: &Url, configured_resource: &Url) -> bool {
     if requested_resource.origin() != configured_resource.origin() {
         return false;
@@ -754,9 +759,7 @@ pub fn resource_selection(
         return Ok(ResourceSelection::Omit);
     }
     if let Some(resource) = authorize_resource {
-        return Url::parse(resource)
-            .map(ResourceSelection::Fixed)
-            .map_err(|error| format!("Invalid URL: {resource}: {error}"));
+        return parse_url(resource).map(ResourceSelection::Fixed);
     }
     if has_explicit_token_endpoint {
         return Ok(ResourceSelection::NoResource);
@@ -1196,8 +1199,7 @@ impl NodeOAuthClientProvider {
 
     pub fn device_authorization_resource(&self) -> Result<Option<Url>, String> {
         let server_url = self.resource_server_url();
-        let mut default_resource = Url::parse(server_url)
-            .map_err(|error| format!("Invalid URL: {server_url}: {error}"))?;
+        let mut default_resource = parse_url(server_url)?;
         default_resource.set_fragment(None);
         if self.resource_selection != ResourceSelection::SdkDefault {
             return Ok(self.resource_selection.validate_resource_url());
@@ -1209,8 +1211,7 @@ impl NodeOAuthClientProvider {
             .get("resource")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let configured_resource =
-            Url::parse(resource).map_err(|error| format!("Invalid URL: {resource}: {error}"))?;
+        let configured_resource = parse_url(resource)?;
         if !resource_allowed(&default_resource, &configured_resource) {
             return Err(format!(
                 "Protected resource {resource} does not match expected {default_resource} (or origin)"
