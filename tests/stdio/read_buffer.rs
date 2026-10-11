@@ -92,3 +92,30 @@ fn serialize_message_is_json_followed_by_newline() {
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n"
     );
 }
+
+#[test]
+fn only_well_formed_json_rpc_messages_are_accepted() {
+    let cases = [
+        (r#"{"jsonrpc":"2.0","method":"a"}"#, true),
+        (r#"{"jsonrpc":"2.0","id":1,"result":null}"#, true),
+        (r#"{"jsonrpc":"2.0","id":1,"error":{"code":1}}"#, true),
+        (r#"{"jsonrpc":"1.0","method":"a"}"#, false),
+        (r#"{"method":"a"}"#, false),
+        (r#"{"jsonrpc":"2.0","method":1}"#, false),
+        (r#"{"jsonrpc":"2.0","id":1}"#, false),
+        (r#"{"jsonrpc":"2.0","result":{}}"#, false),
+        ("[]", false),
+    ];
+    for (line, accepted) in cases {
+        let mut buffer = ReadBuffer::default();
+        buffer.append(format!("{line}\n").as_bytes()).unwrap();
+        let message = buffer.read_message().unwrap();
+        assert_eq!(message.is_ok(), accepted, "{line}");
+        if !accepted {
+            assert_eq!(
+                message.unwrap_err(),
+                format!("Invalid JSON-RPC message: {line}")
+            );
+        }
+    }
+}

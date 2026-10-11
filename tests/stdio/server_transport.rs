@@ -85,3 +85,20 @@ async fn an_oversized_message_reports_an_error_and_closes() {
     );
     assert_eq!(events.recv().await, Some(TransportEvent::Close));
 }
+
+#[tokio::test]
+async fn a_failed_write_reports_an_error_and_closes() {
+    let (_client_in, server_in) = tokio::io::duplex(1024);
+    let (server_out, client_out) = tokio::io::duplex(1024);
+    let (transport, mut events) = StdioServerTransport::start(server_in, server_out, 1024);
+    drop(client_out);
+
+    let error = transport
+        .send(&json!({"jsonrpc": "2.0", "method": "x"}))
+        .await
+        .unwrap_err();
+
+    assert_eq!(events.recv().await, Some(TransportEvent::Error(error)));
+    assert_eq!(events.recv().await, Some(TransportEvent::Close));
+    assert!(transport.is_closed());
+}
