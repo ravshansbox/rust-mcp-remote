@@ -1,8 +1,11 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use rust_mcp_remote::auth::OAuthClientProvider;
 use rust_mcp_remote::cli::prepare_sign_in;
+use rust_mcp_remote::mcp_auth_config::write_json_file;
 use rust_mcp_remote::utils::{CommandLineArgs, parse_command_line_args_to};
+use serde_json::json;
 
 use crate::test_server::{RecordedRequest, reply, serve};
 
@@ -134,5 +137,69 @@ fn a_discovery_failure_is_returned() {
         args.token_endpoint = Some("not a url".to_string());
 
         assert!(prepare_sign_in(&args, "MCP CLI Proxy", true).await.is_err());
+    });
+}
+
+#[test]
+fn stored_usable_tokens_start_no_sign_in() {
+    in_config_dir(async || {
+        let (base, _requests) = serve(Arc::new(|request: &RecordedRequest| {
+            if request.path == "/mcp" {
+                reply(401, &[("www-authenticate", "Bearer")], "")
+            } else {
+                reply(404, &[], "")
+            }
+        }))
+        .await;
+        let port = free_port();
+        let args = command_line(&[&format!("{base}/mcp"), &port.to_string(), "--allow-http"]);
+        write_json_file(
+            &args.server_url_hash,
+            "tokens.json",
+            &json!({"access_token": "stored", "token_type": "Bearer"}),
+        )
+        .unwrap();
+
+        let sign_in = prepare_sign_in(&args, "MCP CLI Proxy", false)
+            .await
+            .unwrap();
+        sign_in.close_owned_auth();
+
+        assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err());
+    });
+}
+
+#[test]
+fn a_stranger_on_the_callback_port_moves_the_redirect_to_the_port_in_use() {
+    in_config_dir(async || {
+        let (base, _requests) = serve(Arc::new(|request: &RecordedRequest| {
+            if request.path == "/mcp" {
+                reply(401, &[("www-authenticate", "Bearer")], "")
+            } else {
+                reply(404, &[], "")
+            }
+        }))
+        .await;
+        let (stranger, _stranger_requests) =
+            serve(Arc::new(|_: &RecordedRequest| reply(404, &[], ""))).await;
+        let stranger_port: u16 = stranger.rsplit(':').next().unwrap().parse().unwrap();
+        let mut args = command_line(&[&format!("{base}/mcp"), "--allow-http"]);
+        args.callback_port = stranger_port;
+
+        let sign_in = prepare_sign_in(&args, "MCP CLI Proxy", false)
+            .await
+            .unwrap();
+        let redirect_url = sign_in.auth_provider.redirect_url().unwrap();
+        sign_in.close_owned_auth();
+
+        let redirect_port: u16 = redirect_url
+            .trim_start_matches("http://localhost:")
+            .split('/')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(redirect_port > stranger_port, "{redirect_url}");
+        assert!(redirect_url.ends_with("/oauth/callback"), "{redirect_url}");
     });
 }
