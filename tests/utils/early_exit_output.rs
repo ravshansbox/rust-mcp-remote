@@ -1,8 +1,5 @@
+use crate::arguments;
 use rust_mcp_remote::utils::{MCP_REMOTE_VERSION, early_exit_output};
-
-fn arguments(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
-}
 
 #[test]
 fn prints_the_usage_for_help() {

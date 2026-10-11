@@ -47,3 +47,8 @@ mod should_include_tool;
 mod test_server;
 mod transform_proxy_response;
 mod validate_server_url;
+
+/// Turns string literals into the owned argument list the parsers take.
+pub fn arguments(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| value.to_string()).collect()
+}

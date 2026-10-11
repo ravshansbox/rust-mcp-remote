@@ -1,8 +1,5 @@
+use crate::arguments;
 use rust_mcp_remote::utils::parse_enable_proxy_to;
-
-fn arguments(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
-}
 
 #[test]
 fn proxy_is_disabled_by_default_and_logs_nothing() {

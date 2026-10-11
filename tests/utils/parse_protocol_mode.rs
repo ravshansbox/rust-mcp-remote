@@ -1,9 +1,6 @@
+use crate::arguments;
 use rust_mcp_remote::protocol_era::ProtocolMode;
 use rust_mcp_remote::utils::parse_protocol_mode_to;
-
-fn arguments(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
-}
 
 #[test]
 fn uses_and_logs_a_valid_protocol_mode() {

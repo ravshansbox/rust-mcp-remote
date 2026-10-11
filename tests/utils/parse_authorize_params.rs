@@ -1,10 +1,7 @@
+use crate::arguments;
 use std::collections::BTreeMap;
 
 use rust_mcp_remote::utils::parse_authorize_params;
-
-fn args(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
-}
 
 fn params(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
     pairs
@@ -15,7 +12,7 @@ fn params(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
 
 #[test]
 fn collects_repeated_key_value_flags() {
-    let result = parse_authorize_params(&args(&[
+    let result = parse_authorize_params(&arguments(&[
         "https://example.com/mcp",
         "--authorize-param",
         "access_type=offline",
@@ -30,7 +27,7 @@ fn collects_repeated_key_value_flags() {
 
 #[test]
 fn only_the_first_equals_sign_separates_key_from_value() {
-    let result = parse_authorize_params(&args(&[
+    let result = parse_authorize_params(&arguments(&[
         "--authorize-param",
         "audience=https://api.example.com/?a=b",
     ]));
@@ -50,9 +47,11 @@ fn refuses_parameters_the_flow_derives_per_request() {
         "code_challenge",
         "code_challenge_method",
     ] {
-        let error =
-            parse_authorize_params(&args(&["--authorize-param", &format!("{reserved}=abc")]))
-                .unwrap_err();
+        let error = parse_authorize_params(&arguments(&[
+            "--authorize-param",
+            &format!("{reserved}=abc"),
+        ]))
+        .unwrap_err();
         assert_eq!(
             error,
             format!(
@@ -65,7 +64,7 @@ fn refuses_parameters_the_flow_derives_per_request() {
 #[test]
 fn rejects_a_value_that_is_not_key_value() {
     for raw in ["audience", "=orphaned"] {
-        let error = parse_authorize_params(&args(&["--authorize-param", raw])).unwrap_err();
+        let error = parse_authorize_params(&arguments(&["--authorize-param", raw])).unwrap_err();
         assert_eq!(
             error,
             format!(
@@ -78,14 +77,14 @@ fn rejects_a_value_that_is_not_key_value() {
 #[test]
 fn no_flags_means_no_parameters() {
     assert_eq!(
-        parse_authorize_params(&args(&["https://example.com/mcp"])),
+        parse_authorize_params(&arguments(&["https://example.com/mcp"])),
         Ok(BTreeMap::new())
     );
 }
 
 #[test]
 fn trims_the_key_keeps_the_value_and_lets_a_later_flag_win() {
-    let result = parse_authorize_params(&args(&[
+    let result = parse_authorize_params(&arguments(&[
         "--authorize-param",
         " audience = first ",
         "--authorize-param",
@@ -102,7 +101,7 @@ fn trims_the_key_keeps_the_value_and_lets_a_later_flag_win() {
 
 #[test]
 fn the_resource_parameter_is_accepted() {
-    let result = parse_authorize_params(&args(&[
+    let result = parse_authorize_params(&arguments(&[
         "--authorize-param",
         "resource=https://api.example.com",
     ]));

@@ -1,8 +1,5 @@
+use crate::arguments;
 use rust_mcp_remote::utils::{parse_auth_timeout_to, parse_ignored_tools_to};
-
-fn arguments(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
-}
 
 #[test]
 fn collects_ignored_tools_and_removes_them_from_arguments() {

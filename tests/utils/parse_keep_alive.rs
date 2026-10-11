@@ -1,8 +1,5 @@
+use crate::arguments;
 use rust_mcp_remote::utils::{KeepAliveConfig, parse_keep_alive_to};
-
-fn arguments(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
-}
 
 #[test]
 fn keep_alive_is_disabled_by_default_with_thirty_second_interval() {

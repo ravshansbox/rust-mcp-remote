@@ -1,14 +1,11 @@
+use crate::arguments;
 use rust_mcp_remote::utils::parse_seconds_option;
-
-fn args(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
-}
 
 #[test]
 fn reads_a_duration_in_seconds_as_milliseconds() {
     assert_eq!(
         parse_seconds_option(
-            &args(&["--connect-timeout", "30"]),
+            &arguments(&["--connect-timeout", "30"]),
             "--connect-timeout",
             false
         ),
@@ -16,7 +13,7 @@ fn reads_a_duration_in_seconds_as_milliseconds() {
     );
     assert_eq!(
         parse_seconds_option(
-            &args(&["--connect-timeout", "2.5"]),
+            &arguments(&["--connect-timeout", "2.5"]),
             "--connect-timeout",
             false
         ),
@@ -28,14 +25,18 @@ fn reads_a_duration_in_seconds_as_milliseconds() {
 fn absent_flag_leaves_the_setting_alone() {
     assert_eq!(
         parse_seconds_option(
-            &args(&["--transport", "sse-only"]),
+            &arguments(&["--transport", "sse-only"]),
             "--connect-timeout",
             false
         ),
         None
     );
     assert_eq!(
-        parse_seconds_option(&args(&["--connect-timeout"]), "--connect-timeout", false),
+        parse_seconds_option(
+            &arguments(&["--connect-timeout"]),
+            "--connect-timeout",
+            false
+        ),
         None
     );
 }
@@ -43,12 +44,12 @@ fn absent_flag_leaves_the_setting_alone() {
 #[test]
 fn zero_is_accepted_only_where_allowed() {
     assert_eq!(
-        parse_seconds_option(&args(&["--body-timeout", "0"]), "--body-timeout", true),
+        parse_seconds_option(&arguments(&["--body-timeout", "0"]), "--body-timeout", true),
         Some(0)
     );
     assert_eq!(
         parse_seconds_option(
-            &args(&["--connect-timeout", "0"]),
+            &arguments(&["--connect-timeout", "0"]),
             "--connect-timeout",
             false
         ),
@@ -60,7 +61,7 @@ fn zero_is_accepted_only_where_allowed() {
 fn rejects_values_that_are_not_durations() {
     assert_eq!(
         parse_seconds_option(
-            &args(&["--connect-timeout", "soon"]),
+            &arguments(&["--connect-timeout", "soon"]),
             "--connect-timeout",
             false
         ),
@@ -68,7 +69,7 @@ fn rejects_values_that_are_not_durations() {
     );
     assert_eq!(
         parse_seconds_option(
-            &args(&["--connect-timeout", "-5"]),
+            &arguments(&["--connect-timeout", "-5"]),
             "--connect-timeout",
             false
         ),
@@ -76,14 +77,18 @@ fn rejects_values_that_are_not_durations() {
     );
     assert_eq!(
         parse_seconds_option(
-            &args(&["--body-timeout", "Infinity"]),
+            &arguments(&["--body-timeout", "Infinity"]),
             "--body-timeout",
             true
         ),
         None
     );
     assert_eq!(
-        parse_seconds_option(&args(&["--body-timeout", "NaN"]), "--body-timeout", true),
+        parse_seconds_option(
+            &arguments(&["--body-timeout", "NaN"]),
+            "--body-timeout",
+            true
+        ),
         None
     );
 }
@@ -91,7 +96,11 @@ fn rejects_values_that_are_not_durations() {
 #[test]
 fn reads_numbers_the_way_javascript_does() {
     let parse = |raw: &str| {
-        parse_seconds_option(&args(&["--ping-interval", raw]), "--ping-interval", false)
+        parse_seconds_option(
+            &arguments(&["--ping-interval", raw]),
+            "--ping-interval",
+            false,
+        )
     };
     assert_eq!(parse(" 3 "), Some(3000));
     assert_eq!(parse("1e1"), Some(10000));
@@ -101,7 +110,7 @@ fn reads_numbers_the_way_javascript_does() {
     assert_eq!(parse("inf"), None);
     assert_eq!(parse(""), None);
     assert_eq!(
-        parse_seconds_option(&args(&["--body-timeout", ""]), "--body-timeout", true),
+        parse_seconds_option(&arguments(&["--body-timeout", ""]), "--body-timeout", true),
         Some(0)
     );
 }
@@ -110,7 +119,7 @@ fn reads_numbers_the_way_javascript_does() {
 fn uses_the_first_occurrence_of_the_flag() {
     assert_eq!(
         parse_seconds_option(
-            &args(&["--ping-interval", "5", "--ping-interval", "9"]),
+            &arguments(&["--ping-interval", "5", "--ping-interval", "9"]),
             "--ping-interval",
             false
         ),

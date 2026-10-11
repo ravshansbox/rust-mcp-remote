@@ -1,8 +1,5 @@
+use crate::arguments;
 use rust_mcp_remote::utils::parse_authorize_params_to;
-
-fn args(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
-}
 
 #[test]
 fn warns_that_a_resource_param_only_reaches_the_authorization_request() {
@@ -10,7 +7,7 @@ fn warns_that_a_resource_param_only_reaches_the_authorization_request() {
 
     let result = parse_authorize_params_to(
         &mut console,
-        &args(&["--authorize-param", "resource=https://api.example.com"]),
+        &arguments(&["--authorize-param", "resource=https://api.example.com"]),
     )
     .expect("params");
 
@@ -33,7 +30,7 @@ fn writes_nothing_for_other_params() {
 
     parse_authorize_params_to(
         &mut console,
-        &args(&["--authorize-param", "audience=https://api.example.com"]),
+        &arguments(&["--authorize-param", "audience=https://api.example.com"]),
     )
     .expect("params");
 

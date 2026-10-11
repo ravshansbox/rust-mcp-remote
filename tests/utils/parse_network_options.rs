@@ -1,8 +1,5 @@
+use crate::arguments;
 use rust_mcp_remote::utils::{NetworkOptions, parse_network_options_to};
-
-fn arguments(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
-}
 
 #[test]
 fn parses_timeouts_and_ipv4_and_logs_them() {

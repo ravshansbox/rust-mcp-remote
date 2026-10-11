@@ -1,8 +1,5 @@
+use crate::arguments;
 use rust_mcp_remote::utils::log_authorize_param_keys_to;
-
-fn args(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
-}
 
 fn console_text(console: Vec<u8>) -> String {
     String::from_utf8(console).expect("utf8")
@@ -14,7 +11,7 @@ fn lists_keys_in_the_order_they_were_first_given() {
 
     log_authorize_param_keys_to(
         &mut console,
-        &args(&[
+        &arguments(&[
             "https://example.com",
             "--authorize-param",
             "prompt=consent",
@@ -38,7 +35,7 @@ fn lists_integer_keys_first_in_ascending_order() {
 
     log_authorize_param_keys_to(
         &mut console,
-        &args(&[
+        &arguments(&[
             "--authorize-param",
             "b=1",
             "--authorize-param",
@@ -63,7 +60,7 @@ fn logs_nothing_without_authorize_params() {
 
     log_authorize_param_keys_to(
         &mut console,
-        &args(&["https://example.com", "--authorize-param"]),
+        &arguments(&["https://example.com", "--authorize-param"]),
     );
 
     assert_eq!(console_text(console), "");

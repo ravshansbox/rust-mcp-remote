@@ -1,8 +1,5 @@
+use crate::arguments;
 use rust_mcp_remote::utils::parse_seconds_option_to;
-
-fn args(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
-}
 
 #[test]
 fn warns_about_an_invalid_positive_duration() {
@@ -10,7 +7,7 @@ fn warns_about_an_invalid_positive_duration() {
 
     let result = parse_seconds_option_to(
         &mut console,
-        &args(&["--connect-timeout", "abc"]),
+        &arguments(&["--connect-timeout", "abc"]),
         "--connect-timeout",
         false,
     );
@@ -31,7 +28,7 @@ fn warns_about_an_invalid_non_negative_duration() {
 
     let result = parse_seconds_option_to(
         &mut console,
-        &args(&["--body-timeout", "-1"]),
+        &arguments(&["--body-timeout", "-1"]),
         "--body-timeout",
         true,
     );
@@ -52,13 +49,13 @@ fn logs_nothing_for_a_valid_or_absent_duration() {
 
     let valid = parse_seconds_option_to(
         &mut console,
-        &args(&["--connect-timeout", "2"]),
+        &arguments(&["--connect-timeout", "2"]),
         "--connect-timeout",
         false,
     );
     let absent = parse_seconds_option_to(
         &mut console,
-        &args(&["--connect-timeout"]),
+        &arguments(&["--connect-timeout"]),
         "--connect-timeout",
         false,
     );

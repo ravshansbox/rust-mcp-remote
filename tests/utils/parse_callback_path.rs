@@ -1,8 +1,5 @@
+use crate::arguments;
 use rust_mcp_remote::utils::{DEFAULT_CALLBACK_PATH, parse_callback_path_to};
-
-fn arguments(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
-}
 
 #[test]
 fn uses_and_logs_a_valid_callback_path() {

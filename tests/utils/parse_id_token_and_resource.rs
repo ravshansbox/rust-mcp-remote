@@ -1,8 +1,5 @@
+use crate::arguments;
 use rust_mcp_remote::utils::{parse_resource_to, parse_use_id_token_to};
-
-fn arguments(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
-}
 
 fn output(console: Vec<u8>) -> String {
     String::from_utf8(console).expect("utf8")

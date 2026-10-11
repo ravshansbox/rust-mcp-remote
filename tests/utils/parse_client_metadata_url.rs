@@ -1,8 +1,5 @@
+use crate::arguments;
 use rust_mcp_remote::utils::parse_client_metadata_url_to;
-
-fn arguments(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
-}
 
 #[test]
 fn uses_and_logs_a_trimmed_valid_url() {

@@ -1,9 +1,6 @@
+use crate::arguments;
 use rust_mcp_remote::utils::parse_static_oauth_client_metadata_to;
 use serde_json::json;
-
-fn arguments(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
-}
 
 #[test]
 fn parses_and_logs_inline_metadata() {
