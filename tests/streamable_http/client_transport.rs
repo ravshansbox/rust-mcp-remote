@@ -6,8 +6,9 @@ use reqwest::Url;
 use rust_mcp_remote::stdio::TransportEvent;
 use rust_mcp_remote::streamable_http::{
     ReconnectionOptions, SendFailure, StreamableHttpClientTransport, StreamableHttpOptions,
-    TokenFn, TransportError, fetch_error, fetch_with_headers, is_within_origin, media_type_essence,
-    parse_jsonrpc_message, redirect_target, set_header, unfollowed_redirect, within_timeout,
+    TokenFn, TransportError, default_client, fetch_error, fetch_with_headers, is_within_origin,
+    media_type_essence, parse_jsonrpc_message, redirect_following_client, redirect_target,
+    set_header, status_text, unfollowed_redirect, within_timeout,
 };
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -727,4 +728,49 @@ async fn within_timeout_gives_up_only_on_an_enabled_timeout() {
 
     let refused = within_timeout(None, client.get("http://127.0.0.1:1/").send()).await;
     assert!(matches!(refused, Err(SendFailure::Request(_))));
+}
+
+#[tokio::test]
+async fn only_the_redirect_following_client_follows_redirects() {
+    let (url, _requests) = serve(Arc::new(|request: &RecordedRequest| {
+        if request.path == "/moved" {
+            reply(302, &[("location", "/target")], "")
+        } else {
+            reply(200, &[], "arrived")
+        }
+    }))
+    .await;
+    let moved = format!("{url}/moved");
+
+    let unfollowed = default_client().get(&moved).send().await.unwrap();
+    assert_eq!(unfollowed.status(), 302);
+    assert_eq!(unfollowed.headers()["location"], "/target");
+
+    let followed = redirect_following_client()
+        .get(&moved)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(followed.status(), 200);
+    assert_eq!(followed.url().path(), "/target");
+}
+
+#[tokio::test]
+async fn status_text_uses_the_canonical_reason_not_the_reason_phrase() {
+    // The test server always sends the reason phrase "X".
+    let (url, _requests) = serve(Arc::new(|request: &RecordedRequest| {
+        if request.path == "/unknown" {
+            reply(599, &[], "")
+        } else {
+            reply(404, &[], "")
+        }
+    }))
+    .await;
+    let client = reqwest::Client::new();
+
+    let not_found = client.get(&url).send().await.unwrap();
+    assert_eq!(status_text(&not_found), "Not Found");
+
+    let unknown = client.get(format!("{url}/unknown")).send().await.unwrap();
+    assert_eq!(status_text(&unknown), "");
 }
