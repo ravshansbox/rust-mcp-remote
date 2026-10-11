@@ -7,7 +7,7 @@ use rust_mcp_remote::stdio::TransportEvent;
 use rust_mcp_remote::streamable_http::{
     ReconnectionOptions, StreamableHttpClientTransport, StreamableHttpOptions, TokenFn,
     TransportError, is_within_origin, media_type_essence, parse_jsonrpc_message, redirect_target,
-    set_header,
+    set_header, unfollowed_redirect,
 };
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -435,6 +435,44 @@ async fn redirect_target_resolves_the_location_of_redirect_statuses_only() {
     assert_eq!(target("/no-location").await, None);
     assert_eq!(target("/empty-location").await, None);
     assert_eq!(target("/not-a-redirect").await, None);
+}
+
+#[tokio::test]
+async fn unfollowed_redirect_names_a_sanitized_target_and_suggests_https() {
+    let (base, _requests) = serve(handler(|request| match request.path.as_str() {
+        "/secret" => reply(
+            302,
+            &[("location", "http://user:pw@other.invalid/mcp?token=x#frag")],
+            "",
+        ),
+        "/plain" => reply(200, &[], ""),
+        _ => reply(404, &[], ""),
+    }))
+    .await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let explain = async |path: &str, endpoint: &str| {
+        let response = client.get(format!("{base}{path}")).send().await.unwrap();
+        unfollowed_redirect(&Url::parse(endpoint).unwrap(), &response)
+    };
+
+    assert_eq!(
+        explain("/secret", "http://host/mcp").await.as_deref(),
+        Some(
+            "Redirect to http://other.invalid/mcp not followed; use that URL as the endpoint \
+             if it is the intended server (redirectPolicy: 'same-origin')"
+        )
+    );
+    assert_eq!(
+        explain("/secret", "https://host/mcp").await.as_deref(),
+        Some(
+            "Redirect from https to plain http not followed; try https://other.invalid/mcp \
+             as the endpoint (redirectPolicy: 'same-origin')"
+        )
+    );
+    assert_eq!(explain("/plain", "http://host/mcp").await, None);
 }
 
 #[test]
