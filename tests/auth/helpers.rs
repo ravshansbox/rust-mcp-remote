@@ -1,5 +1,5 @@
 use rust_mcp_remote::auth::{
-    AuthError, DiscoveryType, IssuerMismatchKind, StartAuthorizationOptions,
+    AuthError, DiscoveryState, DiscoveryType, IssuerMismatchKind, StartAuthorizationOptions,
     assert_secure_token_endpoint, build_discovery_urls, check_resource_allowed,
     compute_scope_union, derive_application_type, determine_scope, discard_if_issuer_mismatch,
     extract_field_from_www_auth, extract_www_authenticate_params, is_https_url,
@@ -508,5 +508,42 @@ fn start_authorization_builds_the_pkce_url() {
     assert_eq!(
         error.to_string(),
         "Incompatible auth server: does not support response type code"
+    );
+}
+
+#[test]
+fn discovery_state_reads_the_camel_case_object_and_needs_an_authorization_server_url() {
+    let state = DiscoveryState::from_value(&json!({
+        "authorizationServerUrl": "https://auth.example.com",
+        "resourceMetadataUrl": "https://api.example.com/.well-known/oauth-protected-resource",
+        "resourceMetadata": { "resource": "https://api.example.com" },
+        "authorizationServerMetadata": { "issuer": "https://auth.example.com" },
+    }))
+    .unwrap();
+    assert_eq!(
+        state,
+        DiscoveryState {
+            authorization_server_url: "https://auth.example.com".to_owned(),
+            resource_metadata_url: Some(
+                "https://api.example.com/.well-known/oauth-protected-resource".to_owned()
+            ),
+            resource_metadata: Some(json!({ "resource": "https://api.example.com" })),
+            authorization_server_metadata: Some(json!({ "issuer": "https://auth.example.com" })),
+        }
+    );
+
+    let minimal = DiscoveryState::from_value(&json!({
+        "authorizationServerUrl": "https://auth.example.com",
+        "resourceMetadataUrl": 42,
+    }))
+    .unwrap();
+    assert_eq!(minimal.resource_metadata_url, None);
+    assert_eq!(minimal.resource_metadata, None);
+    assert_eq!(minimal.authorization_server_metadata, None);
+
+    assert_eq!(DiscoveryState::from_value(&json!({})), None);
+    assert_eq!(
+        DiscoveryState::from_value(&json!({ "authorizationServerUrl": 1 })),
+        None
     );
 }
