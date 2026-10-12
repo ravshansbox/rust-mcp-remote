@@ -1175,6 +1175,37 @@ async fn exchange_authorization_checks_iss_before_sending_the_code() {
 }
 
 #[tokio::test]
+async fn refresh_authorization_takes_a_rotated_refresh_token() {
+    let (base, _requests) = auth_server(Arc::new(|_, request| {
+        (request.path == "/token").then(|| {
+            reply(
+                200,
+                &[JSON],
+                r#"{"access_token":"at-2","token_type":"Bearer","refresh_token":"rt-1"}"#,
+            )
+        })
+    }))
+    .await;
+    let metadata = json!({"token_endpoint": format!("{base}/token")});
+    let tokens = refresh_authorization::<TestProvider>(
+        &base,
+        TokenRequestOptions {
+            metadata: Some(&metadata),
+            client_information: Some(&json!({"client_id": "cid"})),
+            ..Default::default()
+        },
+        "rt-0",
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        tokens,
+        json!({"access_token": "at-2", "token_type": "Bearer", "refresh_token": "rt-1"})
+    );
+}
+
+#[tokio::test]
 async fn token_requests_refuse_plain_http_off_loopback() {
     let metadata = json!({"token_endpoint": "http://as.example/token"});
     let error = refresh_authorization::<TestProvider>(
