@@ -157,3 +157,33 @@ fn an_unfinished_event_is_kept_until_its_blank_line() {
     assert!(parser.feed(b"id: 3\ndata: a\n").is_empty());
     assert_eq!(parser.feed(b"\n"), vec![event(Some("3"), None, "a")]);
 }
+
+#[test]
+fn a_value_keeps_every_colon_after_the_first() {
+    let mut parser = EventSourceParser::new();
+    assert_eq!(
+        parser.feed(b"data: a:b: c\n\n"),
+        vec![event(None, None, "a:b: c")]
+    );
+}
+
+#[test]
+fn an_empty_id_is_kept_as_an_empty_string() {
+    let mut parser = EventSourceParser::new();
+    assert_eq!(
+        parser.feed(b"id:\ndata: x\n\n"),
+        vec![event(Some(""), None, "x")]
+    );
+}
+
+#[test]
+fn a_signed_retry_value_is_an_error() {
+    let mut parser = EventSourceParser::new();
+    assert_eq!(
+        parser.feed(b"retry: -1\nretry: +5\n"),
+        vec![
+            SseItem::Error("Invalid `retry` value: \"-1\"".to_owned()),
+            SseItem::Error("Invalid `retry` value: \"+5\"".to_owned()),
+        ]
+    );
+}
