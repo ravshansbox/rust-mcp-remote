@@ -364,3 +364,32 @@ async fn an_empty_code_is_a_bad_request() {
     assert_eq!(status, 400);
     assert_eq!(body, "Error: No authorization code received");
 }
+
+#[tokio::test]
+async fn shutdown_releases_the_port_for_a_new_server() {
+    let server = start("/oauth/callback", &AuthEvents::new(), None).await;
+    let port = server.actual_port;
+    server.shutdown().await;
+    let again = setup_oauth_callback_server_with_long_poll(OAuthCallbackServerOptions {
+        port,
+        path: "/oauth/callback".to_owned(),
+        events: AuthEvents::new(),
+        auth_timeout_ms: None,
+        server_url_hash: "test-hash".to_owned(),
+    })
+    .await
+    .unwrap();
+    assert_eq!(again.actual_port, port);
+}
+
+#[tokio::test]
+async fn auth_completed_keeps_the_first_code_after_later_ones_arrive() {
+    let server = start("/oauth/callback", &AuthEvents::new(), None).await;
+    let base = format!("http://127.0.0.1:{}/oauth/callback", server.actual_port);
+    get(format!("{base}?code=first")).await;
+    get(format!("{base}?code=second")).await;
+    assert_eq!(server.auth_completed().await, code("first", None));
+    // The queue still hands out both codes in order
+    assert_eq!(server.wait_for_auth_code().await, Ok(code("first", None)));
+    assert_eq!(server.wait_for_auth_code().await, Ok(code("second", None)));
+}
