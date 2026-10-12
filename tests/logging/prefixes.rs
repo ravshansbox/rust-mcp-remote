@@ -36,6 +36,42 @@ fn iso_timestamp_handles_times_before_the_epoch() {
 }
 
 #[test]
+fn iso_timestamp_rounds_sub_millisecond_times_before_the_epoch_down() {
+    assert_eq!(
+        iso_timestamp(UNIX_EPOCH - Duration::from_micros(1)),
+        "1969-12-31T23:59:59.999Z"
+    );
+    assert_eq!(
+        iso_timestamp(UNIX_EPOCH - Duration::from_micros(1_500)),
+        "1969-12-31T23:59:59.998Z"
+    );
+}
+
+#[test]
+fn iso_timestamp_skips_february_29_in_century_years_not_divisible_by_400() {
+    assert_eq!(
+        iso_timestamp(UNIX_EPOCH + Duration::from_millis(4_107_542_399_999)),
+        "2100-02-28T23:59:59.999Z"
+    );
+    assert_eq!(
+        iso_timestamp(UNIX_EPOCH + Duration::from_millis(4_107_542_400_000)),
+        "2100-03-01T00:00:00.000Z"
+    );
+    assert_eq!(
+        iso_timestamp(UNIX_EPOCH - Duration::from_millis(2_203_891_200_000)),
+        "1900-03-01T00:00:00.000Z"
+    );
+}
+
+#[test]
+fn iso_timestamp_handles_a_leap_day_before_the_epoch() {
+    assert_eq!(
+        iso_timestamp(UNIX_EPOCH - Duration::from_millis(58_017_600_000)),
+        "1968-02-29T12:00:00.000Z"
+    );
+}
+
+#[test]
 fn debug_message_starts_with_timestamp_and_pid() {
     assert_eq!(
         format_debug_message("2025-10-10T11:54:56.789Z", 4242, "Connecting"),
