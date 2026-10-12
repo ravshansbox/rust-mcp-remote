@@ -2,6 +2,8 @@ use rust_mcp_remote::node_oauth_client_provider::{
     TokenRequestSources, TokenStormBrake, prepare_token_request,
 };
 
+use crate::pairs;
+
 fn sources<'a>() -> TokenRequestSources<'a> {
     TokenRequestSources {
         has_explicit_token_endpoint: true,
@@ -10,13 +12,6 @@ fn sources<'a>() -> TokenRequestSources<'a> {
         static_scope: None,
         scope: None,
     }
-}
-
-fn pairs(params: &[(&str, String)]) -> Vec<(String, String)> {
-    params
-        .iter()
-        .map(|(key, value)| (key.to_string(), value.clone()))
-        .collect()
 }
 
 #[test]

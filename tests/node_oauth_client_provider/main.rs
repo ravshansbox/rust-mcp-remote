@@ -61,6 +61,14 @@ pub fn write_sibling_lease(hash: &str, pid: u32) {
     .expect("write lease");
 }
 
+/// Turns borrowed-key token request parameters into owned pairs for comparison.
+pub fn pairs(params: &[(&str, String)]) -> Vec<(String, String)> {
+    params
+        .iter()
+        .map(|(key, value)| (key.to_string(), value.clone()))
+        .collect()
+}
+
 mod apply_authorize_params;
 mod apply_scope;
 mod as_bearer_tokens;

@@ -4,7 +4,7 @@ use rust_mcp_remote::node_oauth_client_provider::{
 };
 use serde_json::json;
 
-use crate::with_temporary_config_dir;
+use crate::{pairs, with_temporary_config_dir};
 
 const HASH: &str = "prepare-token-request-method-test";
 
@@ -19,13 +19,6 @@ fn provider(options: OAuthProviderOptions) -> NodeOAuthClientProvider {
         ..options
     })
     .unwrap()
-}
-
-fn pairs(params: Vec<(&str, String)>) -> Vec<(String, String)> {
-    params
-        .into_iter()
-        .map(|(key, value)| (key.to_string(), value))
-        .collect()
 }
 
 #[test]
@@ -54,7 +47,7 @@ fn uses_the_static_client_secret_and_records_the_scope() {
             .unwrap()
             .unwrap();
         assert_eq!(
-            pairs(params),
+            pairs(&params),
             vec![
                 ("grant_type".to_string(), "client_credentials".to_string()),
                 ("scope".to_string(), "read".to_string()),
@@ -81,7 +74,7 @@ fn a_pinned_static_scope_wins_over_the_challenge_scope() {
             .unwrap()
             .unwrap();
         assert_eq!(
-            pairs(params)[1],
+            pairs(&params)[1],
             ("scope".to_string(), "pinned".to_string())
         );
         assert_eq!(provider.www_authenticate_scope.as_deref(), Some("pinned"));
@@ -100,7 +93,7 @@ fn uses_the_cached_client_secret() {
         let mut provider = provider(OAuthProviderOptions::default());
         let params = provider.prepare_token_request(None, 0.0).unwrap().unwrap();
         assert_eq!(
-            pairs(params),
+            pairs(&params),
             vec![("grant_type".to_string(), "client_credentials".to_string())]
         );
         assert_eq!(provider.www_authenticate_scope, None);
