@@ -1,10 +1,7 @@
+use crate::console_text;
 use rust_mcp_remote::utils::validate_server_url_to;
 
 const USAGE: &str = "Usage: mcp-remote <https://server-url>";
-
-fn console_text(console: Vec<u8>) -> String {
-    String::from_utf8(console).expect("utf8")
-}
 
 #[test]
 fn logs_usage_when_the_server_url_is_missing() {

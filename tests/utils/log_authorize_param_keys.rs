@@ -1,9 +1,5 @@
-use crate::arguments;
+use crate::{arguments, console_text};
 use rust_mcp_remote::utils::log_authorize_param_keys_to;
-
-fn console_text(console: Vec<u8>) -> String {
-    String::from_utf8(console).expect("utf8")
-}
 
 #[test]
 fn lists_keys_in_the_order_they_were_first_given() {

@@ -1,19 +1,9 @@
+use crate::{arguments, pairs};
 use rust_mcp_remote::utils::extract_header_args_to;
-
-fn strings(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
-}
-
-fn pairs(values: &[(&str, &str)]) -> Vec<(String, String)> {
-    values
-        .iter()
-        .map(|(name, value)| (name.to_string(), value.to_string()))
-        .collect()
-}
 
 #[test]
 fn removes_header_flags_and_collects_their_values() {
-    let mut args = strings(&[
+    let mut args = arguments(&[
         "https://example.com/mcp",
         "--header",
         "Authorization: Bearer one",
@@ -31,19 +21,19 @@ fn removes_header_flags_and_collects_their_values() {
         headers,
         pairs(&[("Authorization", "Bearer two"), ("X-Tenant", "acme")])
     );
-    assert_eq!(args, strings(&["https://example.com/mcp", "8080"]));
+    assert_eq!(args, arguments(&["https://example.com/mcp", "8080"]));
     assert!(console.is_empty());
 }
 
 #[test]
 fn warns_about_a_malformed_header_without_echoing_it() {
-    let mut args = strings(&["https://example.com/mcp", "--header", "secret-token"]);
+    let mut args = arguments(&["https://example.com/mcp", "--header", "secret-token"]);
     let mut console = Vec::new();
 
     let headers = extract_header_args_to(&mut console, &mut args).expect("headers");
 
     assert!(headers.is_empty());
-    assert_eq!(args, strings(&["https://example.com/mcp"]));
+    assert_eq!(args, arguments(&["https://example.com/mcp"]));
     assert_eq!(
         String::from_utf8(console).expect("utf8"),
         format!(
@@ -86,7 +76,7 @@ fn merges_header_file_values_in_argument_order() {
             ("X-Last", "1")
         ])
     );
-    assert_eq!(args, strings(&["https://example.com/mcp"]));
+    assert_eq!(args, arguments(&["https://example.com/mcp"]));
     assert_eq!(
         String::from_utf8(console).expect("utf8"),
         format!(
@@ -98,18 +88,18 @@ fn merges_header_file_values_in_argument_order() {
 
 #[test]
 fn leaves_a_trailing_flag_without_a_value_in_place() {
-    let mut args = strings(&["https://example.com/mcp", "--header"]);
+    let mut args = arguments(&["https://example.com/mcp", "--header"]);
     let mut console = Vec::new();
 
     let headers = extract_header_args_to(&mut console, &mut args).expect("headers");
 
     assert!(headers.is_empty());
-    assert_eq!(args, strings(&["https://example.com/mcp", "--header"]));
+    assert_eq!(args, arguments(&["https://example.com/mcp", "--header"]));
 }
 
 #[test]
 fn fails_when_a_header_file_cannot_be_read() {
-    let mut args = strings(&["--header-file", "/nonexistent/mcp-remote-headers.txt"]);
+    let mut args = arguments(&["--header-file", "/nonexistent/mcp-remote-headers.txt"]);
     let mut console = Vec::new();
 
     let error = extract_header_args_to(&mut console, &mut args).expect_err("error");

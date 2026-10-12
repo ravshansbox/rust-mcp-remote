@@ -1,8 +1,5 @@
+use crate::console_text;
 use rust_mcp_remote::utils::select_callback_port_to;
-
-fn console_text(console: Vec<u8>) -> String {
-    String::from_utf8(console).expect("utf8")
-}
 
 #[test]
 fn uses_the_specified_port_and_logs_it() {

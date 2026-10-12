@@ -52,3 +52,16 @@ mod validate_server_url;
 pub fn arguments(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| value.to_string()).collect()
 }
+
+/// Turns `(name, value)` literals into the owned header pairs the header helpers take.
+pub fn pairs(values: &[(&str, &str)]) -> Vec<(String, String)> {
+    values
+        .iter()
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect()
+}
+
+/// Decodes what a `*_to` function wrote to its console buffer.
+pub fn console_text(console: Vec<u8>) -> String {
+    String::from_utf8(console).expect("utf8")
+}

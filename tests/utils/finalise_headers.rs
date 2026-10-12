@@ -1,11 +1,5 @@
+use crate::pairs;
 use rust_mcp_remote::utils::finalise_headers_to;
-
-fn pairs(values: &[(&str, &str)]) -> Vec<(String, String)> {
-    values
-        .iter()
-        .map(|(name, value)| (name.to_string(), value.to_string()))
-        .collect()
-}
 
 #[test]
 fn logs_header_names_and_substitutes_environment_variables() {

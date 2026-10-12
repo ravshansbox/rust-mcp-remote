@@ -1,3 +1,4 @@
+use crate::pairs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -19,13 +20,6 @@ fn header_file(name: &str, contents: &str) -> PathBuf {
     let path = directory.join(name);
     std::fs::write(&path, contents).expect("write");
     path
-}
-
-fn pairs(values: &[(&str, &str)]) -> Vec<(String, String)> {
-    values
-        .iter()
-        .map(|(name, value)| (name.to_string(), value.to_string()))
-        .collect()
 }
 
 #[test]
