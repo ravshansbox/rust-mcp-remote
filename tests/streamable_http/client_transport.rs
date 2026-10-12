@@ -1,14 +1,16 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
-use reqwest::Url;
+use reqwest::header::HeaderMap;
+use reqwest::{Method, Url};
 use rust_mcp_remote::stdio::TransportEvent;
 use rust_mcp_remote::streamable_http::{
     ReconnectionOptions, SendFailure, StreamableHttpClientTransport, StreamableHttpOptions,
-    TokenFn, TransportError, default_client, fetch_error, fetch_with_headers, is_within_origin,
-    media_type_essence, parse_jsonrpc_message, redirect_following_client, redirect_target,
-    set_header, status_text, unfollowed_redirect, within_timeout,
+    TokenFn, TransportError, default_client, default_fetch, fetch_error, fetch_with_headers,
+    fetch_within_origin, is_within_origin, media_type_essence, parse_jsonrpc_message,
+    redirect_following_client, redirect_target, set_header, status_text, unfollowed_redirect,
+    within_timeout,
 };
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -522,6 +524,68 @@ async fn follows_a_same_origin_redirect_but_not_a_cross_origin_one() {
         "Error POSTing to endpoint: Redirect to http://elsewhere.invalid/mcp not followed; \
          use that URL as the endpoint if it is the intended server (redirectPolicy: 'same-origin')"
     );
+}
+
+#[tokio::test]
+async fn fetch_within_origin_keeps_the_method_and_stops_once_closed() {
+    let (base, _requests) = serve(handler(|request| match request.path.as_str() {
+        "/found" => reply(302, &[("location", "/final")], ""),
+        "/temporary" => reply(307, &[("location", "/final")], ""),
+        _ => reply(200, &[], ""),
+    }))
+    .await;
+    let fetch = default_fetch();
+    let send = async |path: &str, method: Method, closed: bool| {
+        let url = Url::parse(&format!("{base}{path}")).unwrap();
+        let closed = AtomicBool::new(closed);
+        fetch_within_origin(&fetch, &url, method, HeaderMap::new(), None, &closed)
+            .await
+            .map(|response| (response.status().as_u16(), response.url().path().to_owned()))
+    };
+
+    // A GET follows a 302, but a POST does not, since a 302 may turn it into a GET.
+    assert_eq!(
+        send("/found", Method::GET, false).await.unwrap(),
+        (200, "/final".to_owned())
+    );
+    assert_eq!(
+        send("/found", Method::POST, false).await.unwrap(),
+        (302, "/found".to_owned())
+    );
+    assert_eq!(
+        send("/temporary", Method::POST, false).await.unwrap(),
+        (200, "/final".to_owned())
+    );
+    assert_eq!(
+        send("/final", Method::GET, true).await.unwrap_err(),
+        TransportError::Other("This operation was aborted".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn fetch_within_origin_follows_a_redirect_at_most_five_times() {
+    let count = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&count);
+    let (base, _requests) = serve(handler(move |_| {
+        counter.fetch_add(1, Ordering::SeqCst);
+        reply(308, &[("location", "/again")], "")
+    }))
+    .await;
+    let url = Url::parse(&format!("{base}/start")).unwrap();
+
+    let response = fetch_within_origin(
+        &default_fetch(),
+        &url,
+        Method::GET,
+        HeaderMap::new(),
+        None,
+        &AtomicBool::new(false),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status().as_u16(), 308);
+    assert_eq!(count.load(Ordering::SeqCst), 6);
 }
 
 #[test]
