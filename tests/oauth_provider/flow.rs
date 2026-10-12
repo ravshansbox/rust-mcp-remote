@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 
 use rust_mcp_remote::auth::{AuthOptions, AuthResult, OAuthClientProvider, auth};
 use rust_mcp_remote::mcp_auth_config::{read_json_file, write_json_file};
@@ -12,16 +12,9 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use url::Url;
 
 use crate::test_server::{RecordedRequest, reply, serve};
-use crate::{now_ms, unique_hash, use_temporary_config_dir};
+use crate::{now_ms, opened_url, record_opened, unique_hash, use_temporary_config_dir};
 
 const JSON: (&str, &str) = ("content-type", "application/json");
-
-static OPENED: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
-fn record_opened(url: &str) -> bool {
-    OPENED.lock().unwrap().push(url.to_owned());
-    true
-}
 
 /// An MCP server that is its own authorization server.
 async fn auth_server() -> (String, UnboundedReceiver<RecordedRequest>) {
@@ -167,13 +160,7 @@ async fn signs_in_through_the_browser_and_then_redeems_the_code() {
         json!(["http://localhost:3334/oauth/callback"])
     );
 
-    let opened = OPENED
-        .lock()
-        .unwrap()
-        .iter()
-        .find(|url| url.contains(&base))
-        .cloned()
-        .expect("the browser was sent to the authorization URL");
+    let opened = opened_url(&base).expect("the browser was sent to the authorization URL");
     let opened = Url::parse(&opened).unwrap();
     let query: Vec<(String, String)> = opened.query_pairs().into_owned().collect();
     assert_eq!(opened.path(), "/authorize");
@@ -402,13 +389,7 @@ async fn the_transport_signs_in_on_a_401_and_finish_auth_lets_the_retry_through(
         transport.send(&initialize).await,
         Err(TransportError::Unauthorized("Unauthorized".to_owned()))
     );
-    let opened = OPENED
-        .lock()
-        .unwrap()
-        .iter()
-        .find(|url| url.contains(&base))
-        .cloned()
-        .expect("the browser was sent to the authorization URL");
+    let opened = opened_url(&base).expect("the browser was sent to the authorization URL");
     let opened = Url::parse(&opened).unwrap();
     let query: Vec<(String, String)> = opened.query_pairs().into_owned().collect();
     assert_eq!(param(&query, "client_id"), Some("registered-client"));

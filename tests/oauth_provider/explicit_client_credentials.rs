@@ -18,17 +18,10 @@ use serde_json::{Value, json};
 use url::Url;
 
 use crate::test_server::{RecordedRequest, Reply, reply, serve};
-use crate::{now_ms, use_temporary_config_dir};
+use crate::{now_ms, opened_url, record_opened, use_temporary_config_dir};
 
 const JSON: (&str, &str) = ("content-type", "application/json");
 const TOKEN_PATH: &str = "/oauth2/v1/token";
-
-static OPENED: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
-fn record_opened(url: &str) -> bool {
-    OPENED.lock().unwrap().push(url.to_owned());
-    true
-}
 
 fn unique_hash() -> String {
     crate::unique_hash("explicit-client-credentials")
@@ -290,11 +283,7 @@ fn expire_cached_token(hash: &str, expires_at: f64) {
 
 fn assert_no_browser(network: &Network) {
     assert!(
-        !OPENED
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|url| url.contains(&network.base)),
+        opened_url(&network.base).is_none(),
         "the browser must not be opened"
     );
 }

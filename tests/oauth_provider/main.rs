@@ -37,3 +37,21 @@ pub fn now_ms() -> f64 {
         .unwrap()
         .as_millis() as f64
 }
+
+static OPENED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// A browser opener that records each URL instead of opening it.
+pub fn record_opened(url: &str) -> bool {
+    OPENED.lock().unwrap().push(url.to_owned());
+    true
+}
+
+/// The first recorded browser URL that contains `base`, if any.
+pub fn opened_url(base: &str) -> Option<String> {
+    OPENED
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|url| url.contains(base))
+        .cloned()
+}
