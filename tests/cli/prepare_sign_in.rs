@@ -130,6 +130,19 @@ fn skipping_the_ownership_check_leaves_the_server_unprobed() {
 }
 
 #[test]
+fn the_client_credentials_grant_signs_in_without_a_callback_port() {
+    in_config_dir(async || {
+        let (base, _requests) = serve(Arc::new(|_: &RecordedRequest| reply(404, &[], ""))).await;
+        let mut args = command_line(&[&format!("{base}/mcp"), "--allow-http"]);
+        args.use_client_credentials = true;
+
+        let sign_in = prepare_sign_in(&args, "MCP CLI Proxy", true).await.unwrap();
+
+        assert!(sign_in.signs_in_without_a_callback_port);
+    });
+}
+
+#[test]
 fn a_discovery_failure_is_returned() {
     in_config_dir(async || {
         let mut args = command_line(&["http://127.0.0.1:9/mcp", "--allow-http"]);
