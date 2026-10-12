@@ -502,7 +502,7 @@ fn callback(
     Response {
         status: 200,
         content_type: "text/html; charset=utf-8",
-        body: r#"
+        body: r"
       Authorization successful!
       You may close this window and return to the CLI.
       <script>
@@ -511,7 +511,7 @@ fn callback(
         // the user will see the message above.
         window.close();
       </script>
-    "#
+    "
         .to_owned(),
     }
 }

@@ -241,7 +241,7 @@ impl SendFailure {
     pub fn detailed(self) -> String {
         match self {
             SendFailure::Request(error) => fetch_error(error),
-            other => other.to_string(),
+            other @ SendFailure::HeadersTimeout => other.to_string(),
         }
     }
 }
