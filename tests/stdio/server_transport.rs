@@ -102,3 +102,58 @@ async fn a_failed_write_reports_an_error_and_closes() {
     assert_eq!(events.recv().await, Some(TransportEvent::Close));
     assert!(transport.is_closed());
 }
+
+#[tokio::test]
+async fn an_invalid_json_rpc_message_is_reported_without_closing() {
+    let (mut client_in, server_in) = tokio::io::duplex(1024);
+    let (server_out, _client_out) = tokio::io::duplex(1024);
+    let (transport, mut events) = StdioServerTransport::start(server_in, server_out, 1024);
+
+    client_in
+        .write_all(b"{\"jsonrpc\":\"1.0\"}\n")
+        .await
+        .unwrap();
+    assert_eq!(
+        events.recv().await,
+        Some(TransportEvent::Error(
+            "Invalid JSON-RPC message: {\"jsonrpc\":\"1.0\"}".to_owned()
+        ))
+    );
+
+    client_in
+        .write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"ping\"}\n")
+        .await
+        .unwrap();
+    assert_eq!(
+        events.recv().await,
+        Some(TransportEvent::Message(
+            json!({"jsonrpc": "2.0", "method": "ping"})
+        ))
+    );
+    assert!(!transport.is_closed());
+}
+
+struct FailingReader;
+
+impl tokio::io::AsyncRead for FailingReader {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        _context: &mut std::task::Context<'_>,
+        _buffer: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Err(std::io::Error::other("stdin broke")))
+    }
+}
+
+#[tokio::test]
+async fn a_failed_read_reports_the_error_and_closes() {
+    let (server_out, _client_out) = tokio::io::duplex(1024);
+    let (transport, mut events) = StdioServerTransport::start(FailingReader, server_out, 1024);
+
+    assert_eq!(
+        events.recv().await,
+        Some(TransportEvent::Error("stdin broke".to_owned()))
+    );
+    assert_eq!(events.recv().await, Some(TransportEvent::Close));
+    assert!(transport.is_closed());
+}
