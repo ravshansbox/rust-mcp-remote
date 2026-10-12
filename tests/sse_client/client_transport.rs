@@ -194,6 +194,25 @@ async fn fails_without_reconnecting_on_a_non_200_status() {
 }
 
 #[tokio::test]
+async fn fails_without_reconnecting_when_the_server_sends_204() {
+    let (base, mut requests) = serve(Arc::new(|_: &Recorded| fixed(204, &[], ""))).await;
+    let (transport, mut events) = transport(&base, SseClientOptions::default());
+
+    let error = transport.start().await.unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "SSE error: Server sent HTTP 204, not reconnecting"
+    );
+    assert_eq!(
+        next_event(&mut events).await,
+        TransportEvent::Error("SSE error: Server sent HTTP 204, not reconnecting".to_owned())
+    );
+    requests.recv().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(requests.try_recv().is_err());
+}
+
+#[tokio::test]
 async fn fails_on_a_body_that_is_not_an_event_stream() {
     let (base, _requests) = serve(Arc::new(|_: &Recorded| {
         fixed(200, &[("content-type", "application/json")], "{}")
