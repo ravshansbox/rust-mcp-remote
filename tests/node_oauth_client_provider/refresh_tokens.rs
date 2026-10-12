@@ -2,9 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use rust_mcp_remote::mcp_auth_config::read_json_file;
-use rust_mcp_remote::node_oauth_client_provider::{
-    NodeOAuthClientProvider, OAuthProviderOptions, REFRESH_LEASE_FILE,
-};
+use rust_mcp_remote::node_oauth_client_provider::{NodeOAuthClientProvider, REFRESH_LEASE_FILE};
 use serde_json::{Value, json};
 
 use crate::with_temporary_config_dir;
@@ -12,14 +10,7 @@ use crate::with_temporary_config_dir;
 const HASH: &str = "refresh-tokens-test";
 
 fn provider() -> NodeOAuthClientProvider {
-    NodeOAuthClientProvider::new(OAuthProviderOptions {
-        server_url: "https://auth.example.com".to_string(),
-        callback_port: 3334,
-        host: "localhost".to_string(),
-        server_url_hash: HASH.to_string(),
-        ..Default::default()
-    })
-    .unwrap()
+    crate::provider_with_hash(HASH)
 }
 
 fn refreshed(access_token: &str) -> Value {

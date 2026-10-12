@@ -10,14 +10,7 @@ const HASH: &str = "tokens-test";
 const NOW_MS: f64 = 1_000_000_000.0;
 
 fn provider() -> NodeOAuthClientProvider {
-    NodeOAuthClientProvider::new(OAuthProviderOptions {
-        server_url: "https://auth.example.com".to_string(),
-        callback_port: 3334,
-        host: "localhost".to_string(),
-        server_url_hash: HASH.to_string(),
-        ..Default::default()
-    })
-    .unwrap()
+    crate::provider_with_hash(HASH)
 }
 
 fn client_credentials_provider() -> NodeOAuthClientProvider {

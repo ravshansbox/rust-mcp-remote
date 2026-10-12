@@ -1,21 +1,12 @@
 use rust_mcp_remote::mcp_auth_config::{config_file_path, read_text_file};
-use rust_mcp_remote::node_oauth_client_provider::{
-    NodeOAuthClientProvider, OAuthProviderOptions, code_challenge_for,
-};
+use rust_mcp_remote::node_oauth_client_provider::{NodeOAuthClientProvider, code_challenge_for};
 
 use crate::with_temporary_config_dir;
 
 const HASH: &str = "verifier-test";
 
 fn provider() -> NodeOAuthClientProvider {
-    NodeOAuthClientProvider::new(OAuthProviderOptions {
-        server_url: "https://auth.example.com".to_string(),
-        callback_port: 3334,
-        host: "localhost".to_string(),
-        server_url_hash: HASH.to_string(),
-        ..Default::default()
-    })
-    .unwrap()
+    crate::provider_with_hash(HASH)
 }
 
 #[test]

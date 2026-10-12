@@ -1,16 +1,9 @@
 use rust_mcp_remote::node_oauth_client_provider::{
-    CONCURRENT_FLOW_WINDOW_MS, NodeOAuthClientProvider, OAuthProviderOptions,
+    CONCURRENT_FLOW_WINDOW_MS, NodeOAuthClientProvider,
 };
 
 fn provider() -> NodeOAuthClientProvider {
-    NodeOAuthClientProvider::new(OAuthProviderOptions {
-        server_url: "https://auth.example.com".to_string(),
-        callback_port: 3334,
-        host: "localhost".to_string(),
-        server_url_hash: "abc123".to_string(),
-        ..Default::default()
-    })
-    .unwrap()
+    crate::provider_with_hash("abc123")
 }
 
 #[test]

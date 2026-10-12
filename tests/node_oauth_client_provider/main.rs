@@ -25,6 +25,23 @@ pub fn with_temporary_config_dir<T>(action: impl FnOnce() -> T) -> T {
     result
 }
 
+/// A provider for `https://auth.example.com` on callback port 3334 that stores its
+/// files under `server_url_hash`.
+pub fn provider_with_hash(
+    server_url_hash: &str,
+) -> rust_mcp_remote::node_oauth_client_provider::NodeOAuthClientProvider {
+    rust_mcp_remote::node_oauth_client_provider::NodeOAuthClientProvider::new(
+        rust_mcp_remote::node_oauth_client_provider::OAuthProviderOptions {
+            server_url: "https://auth.example.com".to_string(),
+            callback_port: 3334,
+            host: "localhost".to_string(),
+            server_url_hash: server_url_hash.to_string(),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+}
+
 /// Milliseconds since the Unix epoch, as stored in a refresh lease's `at` field.
 pub fn now_millis() -> u64 {
     std::time::SystemTime::now()
