@@ -253,3 +253,31 @@ fn the_provider_signs_in_at_the_discovered_authorization_server() {
         assert_eq!(server_metadata["issuer"], format!("{base}/auth"));
     });
 }
+
+#[test]
+fn a_stranger_on_a_port_pinned_on_the_command_line_fails_the_sign_in() {
+    in_config_dir(async || {
+        let (base, _requests) = serve(Arc::new(|request: &RecordedRequest| {
+            if request.path == "/mcp" {
+                reply(401, &[("www-authenticate", "Bearer")], "")
+            } else {
+                reply(404, &[], "")
+            }
+        }))
+        .await;
+        let (stranger, _stranger_requests) =
+            serve(Arc::new(|_: &RecordedRequest| reply(404, &[], ""))).await;
+        let stranger_port = stranger.rsplit(':').next().unwrap();
+        let args = command_line(&[&format!("{base}/mcp"), stranger_port, "--allow-http"]);
+
+        let error = prepare_sign_in(&args, "MCP CLI Proxy", false)
+            .await
+            .err()
+            .unwrap();
+
+        assert!(
+            error.contains(&format!("Callback port {stranger_port} is already in use")),
+            "{error}"
+        );
+    });
+}
