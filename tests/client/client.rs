@@ -237,6 +237,61 @@ async fn a_failed_answer_to_a_server_request_is_reported() {
 }
 
 #[tokio::test]
+async fn a_request_the_transport_fails_to_send_is_refused_and_forgotten() {
+    let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (failed_tx, mut failed_ids) = tokio::sync::mpsc::unbounded_channel();
+    let transport = {
+        let events_tx = events_tx.clone();
+        ClientTransport {
+            send: Arc::new(move |message: Value| {
+                if message["method"] == "tools/list" {
+                    let _ = failed_tx.send(message["id"].clone());
+                    return Box::pin(async { Err("pipe closed".to_owned()) });
+                }
+                if message["method"] == "initialize" {
+                    let _ = events_tx.send(TransportEvent::Message(json!({
+                        "jsonrpc": "2.0", "id": message["id"], "result": {
+                            "protocolVersion": "2025-06-18", "capabilities": {},
+                            "serverInfo": {"name": "stub", "version": "1.0.0"},
+                        },
+                    })));
+                }
+                Box::pin(async { Ok(()) })
+            }),
+            close: Arc::new(|| {}),
+            set_protocol_version: Arc::new(|_| {}),
+        }
+    };
+    let client = Client::connect("mcp-remote", "0.0.0", transport, events_rx)
+        .await
+        .unwrap();
+    let (errors_tx, mut errors) = tokio::sync::mpsc::unbounded_channel();
+    client.set_on_error(move |error| {
+        let _ = errors_tx.send(error.to_owned());
+    });
+
+    let error = client.request("tools/list", None).await.unwrap_err();
+    assert_eq!(error.code, CONNECTION_CLOSED);
+    assert_eq!(error.message, "pipe closed");
+
+    // A late answer finds no pending request left to settle.
+    let id = failed_ids.recv().await.unwrap();
+    events_tx
+        .send(TransportEvent::Message(
+            json!({"jsonrpc": "2.0", "id": id, "result": {}}),
+        ))
+        .unwrap();
+    assert!(
+        errors
+            .recv()
+            .await
+            .unwrap()
+            .starts_with("Received a response for an unknown message ID:")
+    );
+    assert!(!client.is_closed());
+}
+
+#[tokio::test]
 async fn a_notification_carries_no_id_and_only_the_params_it_was_given() {
     let mut pair = connected_pair(tools_server()).await;
     let client = pair.client.unwrap();
