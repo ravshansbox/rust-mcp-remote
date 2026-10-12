@@ -150,6 +150,66 @@ async fn an_enveloped_request_derives_its_headers_from_the_body() {
 }
 
 #[tokio::test]
+async fn mcp_name_comes_from_the_uri_or_task_id_and_is_absent_for_other_methods() {
+    let (base, mut requests) = serve(handler(|_| {
+        reply(200, &[JSON], r#"{"jsonrpc":"2.0","id":1,"result":{}}"#)
+    }))
+    .await;
+    let (transport, _events) = transport(&base, StreamableHttpOptions::default());
+    let meta = json!({"io.modelcontextprotocol/protocolVersion": "2026-07-28"});
+
+    for (method, params, expected) in [
+        (
+            "resources/read",
+            json!({"uri": "file:///a.txt", "_meta": meta}),
+            Some("file:///a.txt"),
+        ),
+        (
+            "tasks/get",
+            json!({"taskId": "t-1", "_meta": meta}),
+            Some("t-1"),
+        ),
+        (
+            "tools/list",
+            json!({"name": "ignored", "_meta": meta}),
+            None,
+        ),
+    ] {
+        transport
+            .send(&json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}))
+            .await
+            .unwrap();
+        let request = next_request(&mut requests).await;
+        assert_eq!(request.header("mcp-method"), Some(method));
+        assert_eq!(request.header("mcp-name"), expected, "{method}");
+    }
+}
+
+#[tokio::test]
+async fn a_post_merges_its_accept_types_into_a_configured_accept_header() {
+    let (base, mut requests) = serve(handler(|_| {
+        reply(200, &[JSON], r#"{"jsonrpc":"2.0","id":1,"result":{}}"#)
+    }))
+    .await;
+    let options = StreamableHttpOptions {
+        headers: vec![(
+            "Accept".to_owned(),
+            "Text/Plain, APPLICATION/JSON".to_owned(),
+        )],
+        ..StreamableHttpOptions::default()
+    };
+    let (transport, _events) = transport(&base, options);
+
+    transport.send(&initialize(1)).await.unwrap();
+
+    let request = next_request(&mut requests).await;
+    assert_eq!(
+        request.header("accept"),
+        Some("text/plain, application/json, text/event-stream")
+    );
+}
+
+#[tokio::test]
 async fn an_sse_response_delivers_its_messages_and_does_not_reconnect() {
     let calls = Arc::new(AtomicUsize::new(0));
     let seen = Arc::clone(&calls);
