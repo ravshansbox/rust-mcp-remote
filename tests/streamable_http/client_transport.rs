@@ -98,6 +98,46 @@ async fn initialize_stores_the_session_and_delivers_a_json_response() {
 }
 
 #[tokio::test]
+async fn an_empty_session_header_on_initialize_clears_the_session() {
+    let (base, _requests) = serve(handler(|_| {
+        reply(
+            200,
+            &[JSON, ("mcp-session-id", "")],
+            r#"{"jsonrpc":"2.0","id":1,"result":{}}"#,
+        )
+    }))
+    .await;
+    let options = StreamableHttpOptions {
+        session_id: Some("stale".to_owned()),
+        ..Default::default()
+    };
+    let (transport, mut events) = transport(&base, options);
+
+    transport.send(&initialize(1)).await.unwrap();
+
+    next_event(&mut events).await;
+    assert_eq!(transport.session_id(), None);
+}
+
+#[tokio::test]
+async fn a_200_body_for_a_notification_only_post_is_ignored() {
+    let (base, mut requests) = serve(handler(|_| {
+        reply(200, &[JSON], r#"{"jsonrpc":"2.0","id":7,"result":{}}"#)
+    }))
+    .await;
+    let (transport, mut events) = transport(&base, StreamableHttpOptions::default());
+
+    transport
+        .send(&json!({"jsonrpc":"2.0","method":"notifications/progress"}))
+        .await
+        .unwrap();
+
+    assert_eq!(next_request(&mut requests).await.method, "POST");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(events.try_recv().is_err());
+}
+
+#[tokio::test]
 async fn later_requests_carry_the_session_and_protocol_version() {
     let (base, mut requests) = serve(handler(|_| {
         reply(200, &[JSON], r#"{"jsonrpc":"2.0","id":2,"result":{}}"#)
