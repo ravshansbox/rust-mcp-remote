@@ -66,5 +66,5 @@ fn keeps_the_defaults_silently_without_the_flags() {
     assert!(parse_cookies_enabled_to(&mut console, &values));
     assert!(!parse_device_code_to(&mut console, &values));
     assert!(!parse_client_credentials_to(&mut console, &values));
-    assert!(console.is_empty());
+    assert_eq!(console_text(console), "");
 }

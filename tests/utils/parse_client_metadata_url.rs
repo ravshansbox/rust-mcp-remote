@@ -61,6 +61,6 @@ fn returns_none_silently_without_a_value() {
         let client_metadata_url = parse_client_metadata_url_to(&mut console, &arguments(&values));
 
         assert_eq!(client_metadata_url, None);
-        assert!(console.is_empty());
+        assert_eq!(console_text(console), "");
     }
 }

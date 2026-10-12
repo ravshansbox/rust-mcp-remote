@@ -49,7 +49,7 @@ fn defaults_to_legacy_silently_without_a_value() {
         let mode = parse_protocol_mode_to(&mut console, &arguments(values));
 
         assert_eq!(mode, ProtocolMode::Legacy);
-        assert!(console.is_empty());
+        assert_eq!(console_text(console), "");
     }
 }
 

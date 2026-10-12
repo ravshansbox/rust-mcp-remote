@@ -69,7 +69,7 @@ fn fails_on_invalid_json_without_logging() {
     );
 
     assert!(result.is_err());
-    assert!(console.is_empty());
+    assert_eq!(console_text(console), "");
 }
 
 #[test]
@@ -83,6 +83,6 @@ fn returns_none_silently_without_a_value() {
         let metadata = parse_static_oauth_client_metadata_to(&mut console, &args).expect("parsed");
 
         assert_eq!(metadata, None);
-        assert!(console.is_empty());
+        assert_eq!(console_text(console), "");
     }
 }

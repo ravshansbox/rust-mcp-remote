@@ -48,7 +48,7 @@ fn defaults_to_http_first_silently_without_a_value() {
         let strategy = parse_transport_strategy_to(&mut console, &arguments(values));
 
         assert_eq!(strategy, TransportStrategy::HttpFirst);
-        assert!(console.is_empty());
+        assert_eq!(console_text(console), "");
     }
 }
 

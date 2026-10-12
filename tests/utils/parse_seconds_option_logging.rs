@@ -62,5 +62,5 @@ fn logs_nothing_for_a_valid_or_absent_duration() {
 
     assert_eq!(valid, Some(2000));
     assert_eq!(absent, None);
-    assert!(console.is_empty());
+    assert_eq!(console_text(console), "");
 }

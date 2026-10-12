@@ -34,6 +34,6 @@ fn falls_back_to_the_platform_default_silently() {
         let host = parse_callback_host_to(&mut console, &args);
 
         assert_eq!(host, expected);
-        assert!(console.is_empty());
+        assert_eq!(console_text(console), "");
     }
 }

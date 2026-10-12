@@ -69,6 +69,6 @@ fn falls_back_to_the_default_silently() {
         let callback_path = parse_callback_path_to(&mut console, &args);
 
         assert_eq!(callback_path, "/oauth/callback");
-        assert!(console.is_empty());
+        assert_eq!(console_text(console), "");
     }
 }

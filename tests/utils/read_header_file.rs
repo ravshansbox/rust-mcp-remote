@@ -89,5 +89,5 @@ fn an_unreadable_file_is_an_error_naming_the_file() {
         )),
         "{error}"
     );
-    assert!(console.is_empty());
+    assert_eq!(console_text(console), "");
 }

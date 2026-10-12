@@ -84,5 +84,5 @@ fn writes_warnings_before_logs_and_nothing_without_flags() {
     let defaults =
         parse_network_options_to(&mut quiet_console, &arguments(&["https://example.com"]));
     assert_eq!(defaults, NetworkOptions::default());
-    assert!(quiet_console.is_empty());
+    assert_eq!(console_text(quiet_console), "");
 }

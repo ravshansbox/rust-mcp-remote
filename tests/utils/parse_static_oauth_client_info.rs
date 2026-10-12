@@ -92,7 +92,7 @@ fn fails_on_invalid_json_without_logging() {
         result,
         Err("Could not parse the static OAuth client information as JSON".to_string())
     );
-    assert!(console.is_empty());
+    assert_eq!(console_text(console), "");
 }
 
 #[test]
@@ -106,6 +106,6 @@ fn returns_none_silently_without_a_value() {
         let information = parse_static_oauth_client_info_to(&mut console, &args).expect("parsed");
 
         assert_eq!(information, None);
-        assert!(console.is_empty());
+        assert_eq!(console_text(console), "");
     }
 }

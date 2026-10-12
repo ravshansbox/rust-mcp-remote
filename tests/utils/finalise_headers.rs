@@ -34,6 +34,6 @@ fn writes_nothing_when_there_are_no_headers() {
 
     let headers = finalise_headers_to(&mut console, Vec::new());
 
-    assert!(headers.is_empty());
-    assert!(console.is_empty());
+    assert_eq!(headers, []);
+    assert_eq!(console_text(console), "");
 }

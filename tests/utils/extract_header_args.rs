@@ -22,7 +22,7 @@ fn removes_header_flags_and_collects_their_values() {
         pairs(&[("Authorization", "Bearer two"), ("X-Tenant", "acme")])
     );
     assert_eq!(args, arguments(&["https://example.com/mcp", "8080"]));
-    assert!(console.is_empty());
+    assert_eq!(console_text(console), "");
 }
 
 #[test]
@@ -32,7 +32,7 @@ fn warns_about_a_malformed_header_without_echoing_it() {
 
     let headers = extract_header_args_to(&mut console, &mut args).expect("headers");
 
-    assert!(headers.is_empty());
+    assert_eq!(headers, []);
     assert_eq!(args, arguments(&["https://example.com/mcp"]));
     assert_eq!(
         console_text(console),
@@ -93,7 +93,7 @@ fn leaves_a_trailing_flag_without_a_value_in_place() {
 
     let headers = extract_header_args_to(&mut console, &mut args).expect("headers");
 
-    assert!(headers.is_empty());
+    assert_eq!(headers, []);
     assert_eq!(args, arguments(&["https://example.com/mcp", "--header"]));
 }
 

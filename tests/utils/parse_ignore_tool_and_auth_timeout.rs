@@ -76,5 +76,5 @@ fn defaults_the_auth_timeout_silently() {
     );
 
     assert_eq!(auth_timeout_ms, 30_000);
-    assert!(console.is_empty());
+    assert_eq!(console_text(console), "");
 }

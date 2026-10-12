@@ -45,5 +45,5 @@ fn logs_nothing_without_placeholders() {
     let result = substitute_env_vars_to(&mut console, "${} plain", "headers");
 
     assert_eq!(result, "${} plain");
-    assert!(console.is_empty());
+    assert_eq!(console_text(console), "");
 }

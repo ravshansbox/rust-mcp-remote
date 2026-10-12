@@ -14,7 +14,7 @@ fn keep_alive_is_disabled_by_default_with_thirty_second_interval() {
             interval_ms: 30_000,
         }
     );
-    assert!(console.is_empty());
+    assert_eq!(console_text(console), "");
 }
 
 #[test]

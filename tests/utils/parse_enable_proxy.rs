@@ -8,7 +8,7 @@ fn proxy_is_disabled_by_default_and_logs_nothing() {
     let enable_proxy = parse_enable_proxy_to(&mut console, &arguments(&["https://example.com"]));
 
     assert!(!enable_proxy);
-    assert!(console.is_empty());
+    assert_eq!(console_text(console), "");
 }
 
 #[test]

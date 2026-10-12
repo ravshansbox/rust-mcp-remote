@@ -34,5 +34,5 @@ fn writes_nothing_for_other_params() {
     )
     .expect("params");
 
-    assert!(console.is_empty());
+    assert_eq!(console_text(console), "");
 }
