@@ -22,13 +22,22 @@ fn refuses_schemes_other_than_http_and_https() {
         sanitize_url("file:///etc/passwd"),
         Err("Invalid url to pass to open(): file:///etc/passwd".to_owned())
     );
-    assert!(sanitize_url("javascript:alert(1)").is_err());
-    assert!(sanitize_url("not a url").is_err());
+    assert_eq!(
+        sanitize_url("javascript:alert(1)"),
+        Err("Invalid url to pass to open(): javascript:alert(1)".to_owned())
+    );
+    assert_eq!(
+        sanitize_url("not a url"),
+        Err("Invalid url to pass to open(): not a url".to_owned())
+    );
 }
 
 #[test]
 fn refuses_a_hostname_that_would_need_encoding() {
-    assert!(sanitize_url("http://[::1]:8080/").is_err());
+    assert_eq!(
+        sanitize_url("http://[::1]:8080/"),
+        Err("Invalid url to pass to open(): http://[::1]:8080/".to_owned())
+    );
 }
 
 #[test]

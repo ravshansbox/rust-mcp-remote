@@ -69,5 +69,8 @@ fn strips_one_trailing_slash_from_the_path() {
 
 #[test]
 fn rejects_an_invalid_url() {
-    assert!(build_protected_resource_metadata_urls("not a url").is_err());
+    assert_eq!(
+        build_protected_resource_metadata_urls("not a url"),
+        Err(url::ParseError::RelativeUrlWithoutBase)
+    );
 }

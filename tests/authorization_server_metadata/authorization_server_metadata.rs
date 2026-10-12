@@ -82,5 +82,8 @@ fn does_not_double_up_separators_on_a_trailing_slash() {
 
 #[test]
 fn rejects_an_invalid_url() {
-    assert!(get_metadata_urls("not a url").is_err());
+    assert_eq!(
+        get_metadata_urls("not a url"),
+        Err(url::ParseError::RelativeUrlWithoutBase)
+    );
 }

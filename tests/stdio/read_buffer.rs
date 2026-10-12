@@ -49,7 +49,10 @@ fn json_that_is_not_json_rpc_is_an_error_and_is_consumed() {
     buffer
         .append(b"{\"hello\":1}\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n")
         .unwrap();
-    assert!(buffer.read_message().unwrap().is_err());
+    assert_eq!(
+        buffer.read_message(),
+        Some(Err(r#"Invalid JSON-RPC message: {"hello":1}"#.to_owned()))
+    );
     assert_eq!(buffer.read_message().unwrap().unwrap()["id"], 1);
 }
 
