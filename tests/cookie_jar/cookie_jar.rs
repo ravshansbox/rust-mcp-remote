@@ -336,3 +336,16 @@ fn a_cookie_with_a_future_expires_date_is_kept_until_that_date() {
     *now.lock().unwrap() += Duration::from_secs(1);
     assert_eq!(jar.header("https://mcp.example.com/mcp"), None);
 }
+
+#[test]
+fn a_cookie_set_again_under_another_path_replaces_the_first() {
+    let mut jar = CookieJar::new();
+    jar.capture("https://mcp.example.com/", &["stick=1; Path=/mcp"]);
+    jar.capture("https://mcp.example.com/", &["stick=2; Path=/other"]);
+
+    assert_eq!(jar.header("https://mcp.example.com/mcp"), None);
+    assert_eq!(
+        jar.header("https://mcp.example.com/other").as_deref(),
+        Some("stick=2")
+    );
+}
