@@ -5,6 +5,11 @@
 /// Serializes tests that change process-wide state (environment variables, logging and cookie flags).
 pub static GLOBAL_STATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Decodes captured console output as UTF-8.
+pub fn console_text(console: Vec<u8>) -> String {
+    String::from_utf8(console).expect("utf8")
+}
+
 mod logging_flags;
 mod mcp_auth_config_lease_acquire;
 #[path = "../streamable_http/test_server.rs"]

@@ -5,7 +5,7 @@ use rust_mcp_remote::logging::{set_current_server_url_hash, set_debug};
 use rust_mcp_remote::mcp_auth_config::config_file_path;
 use rust_mcp_remote::utils::announce_server_url_to;
 
-use crate::GLOBAL_STATE;
+use crate::{GLOBAL_STATE, console_text};
 
 const HASH: &str = "announce-server-url-test";
 
@@ -28,10 +28,6 @@ fn with_temporary_config_dir<T>(action: impl FnOnce() -> T) -> T {
     set_debug(false);
     set_current_server_url_hash(None);
     result
-}
-
-fn console_text(console: Vec<u8>) -> String {
-    String::from_utf8(console).expect("utf8")
 }
 
 #[test]

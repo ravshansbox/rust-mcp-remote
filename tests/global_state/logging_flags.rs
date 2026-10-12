@@ -7,7 +7,7 @@ use rust_mcp_remote::logging::{
 use rust_mcp_remote::mcp_auth_config::config_file_path;
 use serde_json::json;
 
-use crate::GLOBAL_STATE;
+use crate::{GLOBAL_STATE, console_text};
 
 const HASH: &str = "logging-flags-test";
 
@@ -31,10 +31,6 @@ fn with_temporary_config_dir<T>(action: impl FnOnce() -> T) -> T {
     set_silent(false);
     set_current_server_url_hash(None);
     result
-}
-
-fn console_text(console: Vec<u8>) -> String {
-    String::from_utf8(console).expect("utf8")
 }
 
 #[test]

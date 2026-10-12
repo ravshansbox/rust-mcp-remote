@@ -1,7 +1,7 @@
 use rust_mcp_remote::logging::{log_to, set_current_server_url_hash, set_debug, set_silent};
 use rust_mcp_remote::utils::parse_debug_and_silent_flags_to;
 
-use crate::GLOBAL_STATE;
+use crate::{GLOBAL_STATE, console_text};
 
 fn with_reset_flags<T>(action: impl FnOnce() -> T) -> T {
     let _guard = GLOBAL_STATE
@@ -16,10 +16,6 @@ fn with_reset_flags<T>(action: impl FnOnce() -> T) -> T {
 
 fn arguments(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| value.to_string()).collect()
-}
-
-fn console_text(console: Vec<u8>) -> String {
-    String::from_utf8(console).expect("utf8")
 }
 
 const MISSING_HASH: &str =
