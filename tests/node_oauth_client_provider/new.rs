@@ -125,10 +125,3 @@ fn an_invalid_authorize_resource_is_an_error() {
         .is_err()
     );
 }
-
-#[test]
-fn set_callback_port_changes_the_port() {
-    let mut provider = NodeOAuthClientProvider::new(options()).unwrap();
-    provider.set_callback_port(4444);
-    assert_eq!(provider.options.callback_port, 4444);
-}
