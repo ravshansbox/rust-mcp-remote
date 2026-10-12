@@ -33,6 +33,8 @@ struct Store {
 struct TestProvider {
     store: Mutex<Store>,
     persist_discovery_state: bool,
+    /// When false, the provider is read-only for client information.
+    persist_client_information: bool,
     /// When set, the provider overrides `validate_resource_url` and returns this.
     resource_override: Option<Option<Url>>,
     /// When set, replaces the default redirect URL and client metadata.
@@ -45,6 +47,7 @@ impl TestProvider {
         Self {
             store: Mutex::new(Store::default()),
             persist_discovery_state: true,
+            persist_client_information: true,
             resource_override: None,
             redirect_url: None,
             client_metadata: None,
@@ -79,6 +82,10 @@ impl OAuthClientProvider for TestProvider {
 
     async fn client_information(&self, _issuer: &str) -> Option<Value> {
         self.store().client_information.clone()
+    }
+
+    fn can_save_client_information(&self) -> bool {
+        self.persist_client_information
     }
 
     async fn save_client_information(
@@ -509,6 +516,60 @@ async fn credentials_stamped_for_another_issuer_are_not_reused() {
         provider.store().client_information.clone().unwrap()["client_id"],
         "registered-client"
     );
+}
+
+#[tokio::test]
+async fn a_provider_that_cannot_save_client_information_never_registers() {
+    let (base, mut requests) = auth_server(Arc::new(|_, _| None)).await;
+    let read_only = || TestProvider {
+        persist_client_information: false,
+        ..TestProvider::new()
+    };
+
+    let provider = read_only();
+    let error = rust_mcp_remote::auth::auth(&provider, &options(&base))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "OAuth client information must be saveable for dynamic registration"
+    );
+
+    let provider = read_only();
+    provider.store().client_information =
+        Some(json!({"client_id": "elsewhere", "issuer": "https://other.example"}));
+    let error = rust_mcp_remote::auth::auth(&provider, &options(&base))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error,
+        AuthError::AuthorizationServerMismatch {
+            recorded: "https://other.example".to_owned(),
+            current: base.clone(),
+        }
+    );
+
+    // Unstamped client information is used as is; the stamp is not saved.
+    let provider = read_only();
+    provider.store().client_information = Some(json!({"client_id": "pre-registered"}));
+    let result = rust_mcp_remote::auth::auth(&provider, &options(&base)).await;
+    assert_eq!(result, Ok(AuthResult::Redirect));
+    let store = provider.store();
+    assert_eq!(
+        store.client_information,
+        Some(json!({"client_id": "pre-registered"}))
+    );
+    let pairs: Vec<(String, String)> = store
+        .redirected_to
+        .as_ref()
+        .unwrap()
+        .query_pairs()
+        .into_owned()
+        .collect();
+    assert_eq!(param(&pairs, "client_id"), Some("pre-registered"));
+
+    let paths: Vec<String> = drain(&mut requests).into_iter().map(|r| r.path).collect();
+    assert!(!paths.contains(&"/register".to_owned()), "{paths:?}");
 }
 
 #[tokio::test]
