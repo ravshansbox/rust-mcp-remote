@@ -689,7 +689,7 @@ async fn fetch_error_appends_every_cause_in_the_source_chain() {
         .unwrap_err();
     let top = error.to_string();
 
-    let message = fetch_error(error);
+    let message = fetch_error(&error);
 
     assert!(
         message.starts_with(&format!("{top}: ")),
@@ -945,7 +945,7 @@ async fn send_failure_details_a_request_error_with_its_whole_cause_chain() {
     let client = reqwest::Client::new();
     let error = client.get("http://127.0.0.1:1/").send().await.unwrap_err();
     let summary = error.to_string();
-    let expected = fetch_error(client.get("http://127.0.0.1:1/").send().await.unwrap_err());
+    let expected = fetch_error(&client.get("http://127.0.0.1:1/").send().await.unwrap_err());
     let failure = SendFailure::Request(error);
     assert_eq!(failure.to_string(), summary);
     let detailed = failure.detailed();

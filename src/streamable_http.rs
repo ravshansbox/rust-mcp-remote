@@ -240,7 +240,7 @@ impl SendFailure {
     /// The message with every underlying cause, as `fetch_error` gives it.
     pub fn detailed(self) -> String {
         match self {
-            SendFailure::Request(error) => fetch_error(error),
+            SendFailure::Request(error) => fetch_error(&error),
             other @ SendFailure::HeadersTimeout => other.to_string(),
         }
     }
@@ -300,9 +300,9 @@ fn fetch_through(client: reqwest::Client) -> FetchFn {
     })
 }
 
-pub fn fetch_error(error: reqwest::Error) -> String {
+pub fn fetch_error(error: &reqwest::Error) -> String {
     let mut message = error.to_string();
-    let mut source = std::error::Error::source(&error);
+    let mut source = std::error::Error::source(error);
     while let Some(cause) = source {
         message = format!("{message}: {cause}");
         source = cause.source();
@@ -1170,7 +1170,7 @@ impl Inner {
                 let chunk = match response.chunk().await {
                     Ok(Some(chunk)) => chunk,
                     Ok(None) => break Ok(()),
-                    Err(error) => break Err(fetch_error(error)),
+                    Err(error) => break Err(fetch_error(&error)),
                 };
                 for item in parser.feed(&chunk) {
                     let event = match item {
