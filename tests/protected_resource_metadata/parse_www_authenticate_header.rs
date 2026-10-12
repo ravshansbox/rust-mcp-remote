@@ -102,3 +102,35 @@ fn skips_a_quoted_value_without_a_closing_quote() {
     assert_eq!(result.error, None);
     assert_eq!(result.scope.as_deref(), Some("read"));
 }
+
+#[test]
+fn keeps_an_empty_quoted_value() {
+    let result = parse_www_authenticate_header("Bearer scope=\"\"");
+    assert_eq!(result.scope.as_deref(), Some(""));
+}
+
+#[test]
+fn ends_an_unquoted_value_at_the_first_character_outside_word_and_hyphen() {
+    let result = parse_www_authenticate_header("Bearer error=invalid-token,scope=read.write");
+    assert_eq!(result.error.as_deref(), Some("invalid-token"));
+    assert_eq!(result.scope.as_deref(), Some("read"));
+}
+
+#[test]
+fn needs_whitespace_after_the_bearer_prefix() {
+    let result = parse_www_authenticate_header("Bearerscope=read");
+    assert_eq!(result, WwwAuthenticateParams::default());
+}
+
+#[test]
+fn ignores_unknown_keys_and_non_ascii_text() {
+    let result =
+        parse_www_authenticate_header("Bearer realm=\"café\", ünïcode=x, scope=read, error=é");
+    assert_eq!(
+        result,
+        WwwAuthenticateParams {
+            scope: Some("read".to_string()),
+            ..WwwAuthenticateParams::default()
+        }
+    );
+}
