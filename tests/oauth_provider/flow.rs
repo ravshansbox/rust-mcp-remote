@@ -1,6 +1,6 @@
 use std::sync::{Arc, OnceLock};
 
-use rust_mcp_remote::auth::{AuthOptions, AuthResult, OAuthClientProvider, auth};
+use rust_mcp_remote::auth::{AuthError, AuthOptions, AuthResult, OAuthClientProvider, auth};
 use rust_mcp_remote::mcp_auth_config::{read_json_file, write_json_file};
 use rust_mcp_remote::node_oauth_client_provider::{
     NodeOAuthClientProvider, OAuthProviderOptions, PendingFlow,
@@ -495,4 +495,33 @@ async fn redirect_to_authorization_stays_quiet_while_another_sign_in_is_pending(
     assert_eq!(provider.redirect_to_authorization(&owner).await, Ok(()));
     let opened = opened_url(&base).expect("the owner's authorization URL was opened");
     assert!(opened.contains("code_challenge=pending-challenge"));
+}
+
+#[tokio::test]
+async fn redirect_to_authorization_refuses_to_sign_in_during_a_token_storm() {
+    let (base, _requests) = auth_server().await;
+    let provider = provider(
+        &base,
+        &unique_hash("storm"),
+        OAuthProviderOptions {
+            authorization_server_metadata: Some(json!({"issuer": base})),
+            ..Default::default()
+        },
+    );
+    {
+        let mut inner = provider.lock();
+        for _ in 0..20 {
+            inner
+                .token_storm_brake
+                .guard_against_token_storm(now_ms())
+                .unwrap();
+        }
+    }
+
+    let url = Url::parse(&format!("{base}/authorize?code_challenge=storm")).unwrap();
+    let Err(AuthError::Other(message)) = provider.redirect_to_authorization(&url).await else {
+        panic!("the token storm brake should stop the redirect");
+    };
+    assert!(message.starts_with("Stopped after 20 token exchanges"));
+    assert_eq!(opened_url(&base), None);
 }
