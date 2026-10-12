@@ -393,7 +393,9 @@ async fn fetch_and_cache_metadata(
             &[json!({ "scopes_supported": scopes_supported })],
         );
     }
-    utils::lock(inner).authorization_server_metadata = metadata.clone();
+    utils::lock(inner)
+        .authorization_server_metadata
+        .clone_from(&metadata);
     metadata
 }
 

@@ -153,7 +153,7 @@ fn handle(state: &mut NetworkState, base: &str, request: &RecordedRequest) -> Re
             );
         }
         let access_token = format!("issued-{}", state.token_requests.len());
-        state.accepted_token = access_token.clone();
+        state.accepted_token.clone_from(&access_token);
         return json_reply(
             200,
             json!({"access_token": access_token, "token_type": "Bearer", "expires_in": 3600}),
