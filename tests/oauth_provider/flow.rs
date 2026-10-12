@@ -525,3 +525,25 @@ async fn redirect_to_authorization_refuses_to_sign_in_during_a_token_storm() {
     assert!(message.starts_with("Stopped after 20 token exchanges"));
     assert_eq!(opened_url(&base), None);
 }
+
+#[tokio::test]
+async fn redirect_to_authorization_stops_after_five_unfinished_sign_ins() {
+    let (base, _requests) = auth_server().await;
+    let provider = provider(
+        &base,
+        &unique_hash("authorization-storm"),
+        OAuthProviderOptions {
+            authorization_server_metadata: Some(json!({"issuer": base})),
+            ..Default::default()
+        },
+    );
+    let url = Url::parse(&format!("{base}/authorize?code_challenge=again")).unwrap();
+    for _ in 0..5 {
+        assert_eq!(provider.redirect_to_authorization(&url).await, Ok(()));
+    }
+
+    let Err(AuthError::Other(message)) = provider.redirect_to_authorization(&url).await else {
+        panic!("the sixth sign-in in the window should be refused");
+    };
+    assert!(message.starts_with("Stopped after 5 sign-ins"));
+}
