@@ -115,3 +115,32 @@ fn has_usable_tokens_uses_the_current_time() {
     });
     assert!(!expired);
 }
+
+#[test]
+fn tokens_with_a_non_string_access_token_or_type_are_not_usable() {
+    assert!(!usable_with(Some(
+        json!({ "access_token": 42, "token_type": "Bearer" })
+    )));
+    assert!(!usable_with(Some(
+        json!({ "access_token": "at", "token_type": null })
+    )));
+}
+
+#[test]
+fn an_expiry_of_zero_means_no_expiry() {
+    assert!(usable_with(Some(json!({
+        "access_token": "at",
+        "token_type": "Bearer",
+        "expires_at": 0,
+    }))));
+}
+
+#[test]
+fn expired_tokens_with_an_empty_refresh_token_are_not_usable() {
+    assert!(!usable_with(Some(json!({
+        "access_token": "at",
+        "token_type": "Bearer",
+        "expires_at": NOW - 1,
+        "refresh_token": "",
+    }))));
+}
