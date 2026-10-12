@@ -59,11 +59,11 @@ pub const DISCOVER_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long each leg of a multi-round-trip exchange may take: a question to the client is a model
 /// call or a person reading something, not a request that was never expected to run long.
-pub const MULTI_ROUND_TRIP_LEG_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+pub const MULTI_ROUND_TRIP_LEG_TIMEOUT: Duration = Duration::from_mins(10);
 
 /// How long a `subscriptions/listen` stream may stay open. Not a request timeout: the request
 /// is the stream, so this bounds a session's worth of change notifications.
-pub const SUBSCRIPTION_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
+pub const SUBSCRIPTION_LIFETIME: Duration = Duration::from_hours(24);
 
 /// How long to wait before reopening a change-notification stream that ended.
 pub const SUBSCRIPTION_REOPEN_DELAY: Duration = Duration::from_secs(2);

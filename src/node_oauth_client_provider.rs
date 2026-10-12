@@ -25,7 +25,7 @@ const URL_SAFE_ANY_PADDING: GeneralPurpose = GeneralPurpose::new(
 
 const CODE_VERIFIER_PREFIX: &str = "code_verifier_";
 
-const ABANDONED_FLOW_AGE: Duration = Duration::from_secs(10 * 60);
+const ABANDONED_FLOW_AGE: Duration = Duration::from_mins(10);
 
 const FALLBACK_SCOPE: &str = "openid email profile";
 
