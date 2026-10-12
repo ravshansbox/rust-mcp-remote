@@ -1656,6 +1656,7 @@ pub fn pkce_challenge() -> Result<(String, String), AuthError> {
     Ok((verifier, challenge))
 }
 
+#[derive(Clone, Copy)]
 pub struct StartAuthorizationOptions<'a> {
     pub metadata: Option<&'a Value>,
     pub client_information: &'a Value,
