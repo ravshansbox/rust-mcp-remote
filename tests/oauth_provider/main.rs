@@ -55,3 +55,13 @@ pub fn opened_url(base: &str) -> Option<String> {
         .find(|url| url.contains(base))
         .cloned()
 }
+
+/// How many recorded browser URLs contain `base`.
+pub fn opened_count(base: &str) -> usize {
+    OPENED
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|url| url.contains(base))
+        .count()
+}

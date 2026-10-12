@@ -14,7 +14,9 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use url::Url;
 
 use crate::test_server::{RecordedRequest, reply, serve};
-use crate::{now_ms, opened_url, record_opened, unique_hash, use_temporary_config_dir};
+use crate::{
+    now_ms, opened_count, opened_url, record_opened, unique_hash, use_temporary_config_dir,
+};
 
 const JSON: (&str, &str) = ("content-type", "application/json");
 
@@ -541,9 +543,11 @@ async fn redirect_to_authorization_stops_after_five_unfinished_sign_ins() {
     for _ in 0..5 {
         assert_eq!(provider.redirect_to_authorization(&url).await, Ok(()));
     }
+    assert_eq!(opened_count(&base), 5);
 
     let Err(AuthError::Other(message)) = provider.redirect_to_authorization(&url).await else {
         panic!("the sixth sign-in in the window should be refused");
     };
     assert!(message.starts_with("Stopped after 5 sign-ins"));
+    assert_eq!(opened_count(&base), 5, "the refused sign-in opened no tab");
 }
