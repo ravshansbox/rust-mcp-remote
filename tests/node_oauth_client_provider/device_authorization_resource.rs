@@ -61,7 +61,13 @@ fn a_metadata_resource_on_another_origin_is_an_error() {
         Some(json!({ "resource": "https://evil.example.com/mcp" })),
         |_| {},
     );
-    assert!(provider.device_authorization_resource().is_err());
+    assert_eq!(
+        provider.device_authorization_resource(),
+        Err(
+            "Protected resource https://evil.example.com/mcp does not match expected https://mcp.example.com/mcp (or origin)"
+                .to_string()
+        )
+    );
 }
 
 #[test]
@@ -71,7 +77,13 @@ fn a_path_prefix_without_a_segment_boundary_is_an_error() {
         Some(json!({ "resource": "https://mcp.example.com/api" })),
         |_| {},
     );
-    assert!(provider.device_authorization_resource().is_err());
+    assert_eq!(
+        provider.device_authorization_resource(),
+        Err(
+            "Protected resource https://mcp.example.com/api does not match expected https://mcp.example.com/api123 (or origin)"
+                .to_string()
+        )
+    );
 }
 
 #[test]

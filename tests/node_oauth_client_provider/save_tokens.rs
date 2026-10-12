@@ -77,7 +77,9 @@ fn ends_the_flow_and_deletes_its_code_verifier() {
             )
             .unwrap();
         assert!(provider.pending_flow.is_none());
-        assert!(provider.code_verifier().is_err());
+        let error = provider.code_verifier().unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(error.to_string(), "No code verifier saved for session");
     });
 }
 
