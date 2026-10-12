@@ -29,8 +29,8 @@ fn joins_data_lines_with_newlines_and_accepts_any_line_ending() {
 #[test]
 fn keeps_an_unfinished_line_for_the_next_chunk_including_a_trailing_cr() {
     let mut parser = EventSourceParser::new();
-    assert!(parser.feed(b"da").is_empty());
-    assert!(parser.feed(b"ta: x\r").is_empty());
+    assert_eq!(parser.feed(b"da"), []);
+    assert_eq!(parser.feed(b"ta: x\r"), []);
     assert_eq!(parser.feed(b"\n\r\n"), vec![event(None, None, "x")]);
 }
 
@@ -38,7 +38,7 @@ fn keeps_an_unfinished_line_for_the_next_chunk_including_a_trailing_cr() {
 fn splits_a_multibyte_character_across_chunks_without_damage() {
     let mut parser = EventSourceParser::new();
     let bytes = "data: \u{00e9}\n\n".as_bytes();
-    assert!(parser.feed(&bytes[..7]).is_empty());
+    assert_eq!(parser.feed(&bytes[..7]), []);
     assert_eq!(
         parser.feed(&bytes[7..]),
         vec![event(None, None, "\u{00e9}")]
@@ -48,7 +48,7 @@ fn splits_a_multibyte_character_across_chunks_without_damage() {
 #[test]
 fn ignores_comments_and_events_without_data_and_clears_the_id_after_dispatch() {
     let mut parser = EventSourceParser::new();
-    assert!(parser.feed(b": ping\n\nid: 1\n\n").is_empty());
+    assert_eq!(parser.feed(b": ping\n\nid: 1\n\n"), []);
     assert_eq!(parser.feed(b"data: a\n\n"), vec![event(None, None, "a")]);
 }
 
@@ -115,7 +115,7 @@ fn an_empty_retry_value_is_an_error() {
 #[test]
 fn keeps_a_bom_that_is_not_at_the_start_of_the_stream() {
     let mut parser = EventSourceParser::new();
-    assert!(parser.feed(b"data: a").is_empty());
+    assert_eq!(parser.feed(b"data: a"), []);
     assert_eq!(
         parser.feed(b"\xEF\xBB\xBF\n\n"),
         vec![event(None, None, "a\u{feff}")]
@@ -144,7 +144,7 @@ fn a_retry_too_large_for_u64_saturates() {
 #[test]
 fn an_empty_first_chunk_does_not_stop_the_bom_being_dropped() {
     let mut parser = EventSourceParser::new();
-    assert!(parser.feed(b"").is_empty());
+    assert_eq!(parser.feed(b""), []);
     assert_eq!(
         parser.feed(b"\xEF\xBB\xBFdata: x\n\n"),
         vec![event(None, None, "x")]
@@ -154,7 +154,7 @@ fn an_empty_first_chunk_does_not_stop_the_bom_being_dropped() {
 #[test]
 fn an_unfinished_event_is_kept_until_its_blank_line() {
     let mut parser = EventSourceParser::new();
-    assert!(parser.feed(b"id: 3\ndata: a\n").is_empty());
+    assert_eq!(parser.feed(b"id: 3\ndata: a\n"), []);
     assert_eq!(parser.feed(b"\n"), vec![event(Some("3"), None, "a")]);
 }
 
@@ -191,7 +191,7 @@ fn a_signed_retry_value_is_an_error() {
 #[test]
 fn an_event_name_without_data_does_not_carry_over_to_the_next_event() {
     let mut parser = EventSourceParser::new();
-    assert!(parser.feed(b"event: endpoint\n\n").is_empty());
+    assert_eq!(parser.feed(b"event: endpoint\n\n"), []);
     assert_eq!(parser.feed(b"data: a\n\n"), vec![event(None, None, "a")]);
 }
 
@@ -211,14 +211,14 @@ fn field_names_are_case_sensitive() {
 #[test]
 fn a_lone_cr_at_the_end_of_a_chunk_still_ends_the_line() {
     let mut parser = EventSourceParser::new();
-    assert!(parser.feed(b"data: a\r").is_empty());
+    assert_eq!(parser.feed(b"data: a\r"), []);
     assert_eq!(parser.feed(b"data: b\n\n"), vec![event(None, None, "a\nb")]);
 }
 
 #[test]
 fn a_crlf_split_across_chunks_is_one_line_end() {
     let mut parser = EventSourceParser::new();
-    assert!(parser.feed(b"data: a\r").is_empty());
-    assert!(parser.feed(b"\ndata: b\r").is_empty());
+    assert_eq!(parser.feed(b"data: a\r"), []);
+    assert_eq!(parser.feed(b"\ndata: b\r"), []);
     assert_eq!(parser.feed(b"\n\r\n"), vec![event(None, None, "a\nb")]);
 }
