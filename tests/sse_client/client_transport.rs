@@ -610,3 +610,44 @@ async fn a_401_stream_without_a_provider_fails_as_a_non_200_status() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(requests.try_recv().is_err());
 }
+
+#[tokio::test]
+async fn resolves_a_relative_endpoint_against_the_stream_url_and_follows_a_later_one() {
+    let streams = Streams::default();
+    let handler_streams = streams.clone();
+    let (base, mut requests) = serve(Arc::new(move |request: &Recorded| {
+        if request.method == "GET" {
+            handler_streams.open("event: endpoint\ndata: messages?sessionId=1\n\n")
+        } else {
+            fixed(202, &[], "Accepted")
+        }
+    }))
+    .await;
+    let (transport, mut events) = SseClientTransport::new(
+        Url::parse(&format!("{base}/api/sse")).unwrap(),
+        SseClientOptions::default(),
+    );
+
+    transport.start().await.unwrap();
+    assert_eq!(
+        transport.endpoint().unwrap().as_str(),
+        format!("{base}/api/messages?sessionId=1")
+    );
+    assert_eq!(requests.recv().await.unwrap().path, "/api/sse");
+
+    let ping = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
+    streams.push(&format!(
+        "event: endpoint\ndata: /other?sessionId=2\n\nevent: message\ndata: {ping}\n\n"
+    ));
+    match next_event(&mut events).await {
+        TransportEvent::Message(message) => assert_eq!(message, ping),
+        other => panic!("expected a message, got {other:?}"),
+    }
+    assert_eq!(
+        transport.endpoint().unwrap().as_str(),
+        format!("{base}/other?sessionId=2")
+    );
+    transport.send(&ping).await.unwrap();
+    assert_eq!(requests.recv().await.unwrap().path, "/other?sessionId=2");
+    transport.close();
+}
