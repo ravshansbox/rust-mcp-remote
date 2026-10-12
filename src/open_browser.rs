@@ -228,7 +228,7 @@ pub fn sanitize_url(raw: &str) -> Result<String, String> {
     }
     match url.fragment().map(str::to_owned) {
         Some(fragment) if !fragment.is_empty() => {
-            url.set_fragment(Some(&encode_uri_component(&fragment)))
+            url.set_fragment(Some(&encode_uri_component(&fragment)));
         }
         _ => url.set_fragment(None),
     }

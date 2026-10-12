@@ -212,7 +212,7 @@ pub fn invalidate_mismatched_client_registration(server_url_hash: &str, redirect
         &mut std::io::stderr(),
         server_url_hash,
         redirect_url,
-    )
+    );
 }
 
 pub fn invalidate_mismatched_client_registration_to(
@@ -1246,7 +1246,7 @@ pub fn substitute_env_vars_to(
                     &format!("Replacing {placeholder} with environment value in {context}"),
                     &[],
                 );
-                result.push_str(&environment_value.to_string_lossy())
+                result.push_str(&environment_value.to_string_lossy());
             }
             None => {
                 log_to(
@@ -1256,7 +1256,7 @@ pub fn substitute_env_vars_to(
                     ),
                     &[],
                 );
-                result.push_str(placeholder)
+                result.push_str(placeholder);
             }
         }
         rest = &rest[end..];
