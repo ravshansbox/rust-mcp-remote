@@ -300,3 +300,21 @@ async fn closing_the_client_fails_requests_in_flight_and_calls_the_close_hook_on
         "each close() closes the transport"
     );
 }
+
+#[tokio::test]
+async fn a_request_after_closing_is_refused_without_being_sent() {
+    let mut pair = connected_pair(tools_server()).await;
+    let client = pair.client.unwrap();
+    pair.sent.recv().await.unwrap();
+    pair.sent.recv().await.unwrap();
+
+    client.close();
+    let error = client.request("tools/list", None).await.unwrap_err();
+
+    assert_eq!(error.code, CONNECTION_CLOSED);
+    assert_eq!(error.message, "Not connected");
+    assert!(
+        pair.sent.try_recv().is_err(),
+        "nothing reaches the transport"
+    );
+}
