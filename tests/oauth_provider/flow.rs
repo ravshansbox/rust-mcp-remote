@@ -1,4 +1,3 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use rust_mcp_remote::auth::{AuthOptions, AuthResult, OAuthClientProvider, auth};
@@ -13,7 +12,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use url::Url;
 
 use crate::test_server::{RecordedRequest, reply, serve};
-use crate::use_temporary_config_dir;
+use crate::{now_ms, unique_hash, use_temporary_config_dir};
 
 const JSON: (&str, &str) = ("content-type", "application/json");
 
@@ -22,11 +21,6 @@ static OPENED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 fn record_opened(url: &str) -> bool {
     OPENED.lock().unwrap().push(url.to_owned());
     true
-}
-
-fn unique_hash(name: &str) -> String {
-    static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    format!("{name}-{}", COUNTER.fetch_add(1, Ordering::SeqCst))
 }
 
 /// An MCP server that is its own authorization server.
@@ -139,13 +133,6 @@ fn provider(base: &str, hash: &str, options: OAuthProviderOptions) -> OAuthProvi
     })
     .unwrap();
     OAuthProvider::new(provider, None).with_browser_opener(record_opened)
-}
-
-fn now_ms() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as f64
 }
 
 #[tokio::test]

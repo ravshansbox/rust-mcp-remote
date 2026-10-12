@@ -2,7 +2,6 @@
 //! explicit token endpoint, driven through the Client, the streamable HTTP transport and the
 //! real provider, with an MCP server whose discovery URLs all redirect to an enterprise login.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -19,7 +18,7 @@ use serde_json::{Value, json};
 use url::Url;
 
 use crate::test_server::{RecordedRequest, Reply, reply, serve};
-use crate::use_temporary_config_dir;
+use crate::{now_ms, use_temporary_config_dir};
 
 const JSON: (&str, &str) = ("content-type", "application/json");
 const TOKEN_PATH: &str = "/oauth2/v1/token";
@@ -32,18 +31,7 @@ fn record_opened(url: &str) -> bool {
 }
 
 fn unique_hash() -> String {
-    static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    format!(
-        "explicit-client-credentials-{}",
-        COUNTER.fetch_add(1, Ordering::SeqCst)
-    )
-}
-
-fn now_ms() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as f64
+    crate::unique_hash("explicit-client-credentials")
 }
 
 fn tool() -> Value {

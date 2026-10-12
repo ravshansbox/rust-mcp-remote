@@ -20,3 +20,20 @@ pub fn use_temporary_config_dir() {
         directory
     });
 }
+
+/// A server hash no other test in this binary uses.
+pub fn unique_hash(name: &str) -> String {
+    static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    format!(
+        "{name}-{}",
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    )
+}
+
+/// The current time in milliseconds since the Unix epoch.
+pub fn now_ms() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as f64
+}
