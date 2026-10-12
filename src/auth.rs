@@ -1767,7 +1767,7 @@ pub struct TokenRequestOptions<'a> {
 
 fn set_param(params: &mut Vec<(String, String)>, name: &str, value: &str) {
     match params.iter_mut().find(|(key, _)| key == name) {
-        Some(pair) => pair.1 = value.to_owned(),
+        Some(pair) => value.clone_into(&mut pair.1),
         None => params.push((name.to_owned(), value.to_owned())),
     }
 }
