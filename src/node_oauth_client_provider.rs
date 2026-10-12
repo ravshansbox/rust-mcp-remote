@@ -857,9 +857,8 @@ pub struct StoredTokens {
     pub is_expired: bool,
 }
 
-fn or_default(value: &Option<String>, default: &str) -> String {
+fn or_default(value: Option<&str>, default: &str) -> String {
     value
-        .as_deref()
         .filter(|value| !value.is_empty())
         .unwrap_or(default)
         .to_string()
@@ -877,14 +876,17 @@ impl NodeOAuthClientProvider {
         )?;
         Ok(Self {
             server_url_hash: options.server_url_hash.clone(),
-            callback_path: or_default(&options.callback_path, "/oauth/callback"),
-            client_name: or_default(&options.client_name, "MCP CLI Client"),
+            callback_path: or_default(options.callback_path.as_deref(), "/oauth/callback"),
+            client_name: or_default(options.client_name.as_deref(), "MCP CLI Client"),
             client_uri: or_default(
-                &options.client_uri,
+                options.client_uri.as_deref(),
                 "https://github.com/modelcontextprotocol/mcp-cli",
             ),
-            software_id: or_default(&options.software_id, "2e6dc280-f3c3-4e01-99a7-8181dbd1d23d"),
-            software_version: or_default(&options.software_version, MCP_REMOTE_VERSION),
+            software_id: or_default(
+                options.software_id.as_deref(),
+                "2e6dc280-f3c3-4e01-99a7-8181dbd1d23d",
+            ),
+            software_version: or_default(options.software_version.as_deref(), MCP_REMOTE_VERSION),
             static_oauth_client_metadata: options.static_oauth_client_metadata.clone(),
             static_oauth_client_info: options.static_oauth_client_info.clone(),
             client_metadata_url: options.client_metadata_url.clone(),
