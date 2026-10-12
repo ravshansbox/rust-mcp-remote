@@ -119,10 +119,12 @@ async fn exits_with_one_when_the_server_cannot_be_reached() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("Fatal error:"));
 }
 
-#[tokio::test]
-async fn the_end_of_stdin_shuts_the_client_down() {
-    // A server that never answers tools/list, so only the shutdown can end the run.
-    let (base, _requests) = test_server::serve(Arc::new(|request| {
+/// A server that never answers tools/list, so only the shutdown can end the run.
+async fn server_that_never_lists_tools() -> (
+    String,
+    tokio::sync::mpsc::UnboundedReceiver<test_server::RecordedRequest>,
+) {
+    test_server::serve(Arc::new(|request| {
         if request.method != "POST" {
             return test_server::reply(405, &[], "");
         }
@@ -140,7 +142,12 @@ async fn the_end_of_stdin_shuts_the_client_down() {
             .to_string(),
         )
     }))
-    .await;
+    .await
+}
+
+#[tokio::test]
+async fn the_end_of_stdin_shuts_the_client_down() {
+    let (base, _requests) = server_that_never_lists_tools().await;
 
     let output = tokio::time::timeout(
         Duration::from_secs(20),
@@ -152,6 +159,44 @@ async fn the_end_of_stdin_shuts_the_client_down() {
     .await
     .expect("the client did not shut down")
     .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("Shutting down..."), "{stderr}");
+    assert!(stderr.contains("Closing connection..."), "{stderr}");
+    assert!(!stderr.contains("Exiting OK..."), "{stderr}");
+}
+
+#[tokio::test]
+async fn ctrl_c_shuts_the_client_down() {
+    let (base, mut requests) = server_that_never_lists_tools().await;
+
+    let mut child = command()
+        .args([&format!("{base}/mcp"), "--allow-http"])
+        // Kept open, so only the signal can shut the client down.
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.take();
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let request = requests.recv().await.unwrap();
+            if request.body.contains("\"tools/list\"") {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the client did not request the tools list");
+    // SAFETY: kill only sends a signal to the child we spawned.
+    unsafe { libc::kill(child.id().unwrap() as libc::pid_t, libc::SIGINT) };
+    let output = tokio::time::timeout(Duration::from_secs(20), child.wait_with_output())
+        .await
+        .expect("the client did not shut down")
+        .unwrap();
+    drop(stdin);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert_eq!(output.status.code(), Some(0), "{stderr}");
