@@ -27,6 +27,8 @@ struct AuthCall {
 struct FakeOauth {
     token: Mutex<Option<String>>,
     result: AuthResult,
+    /// When set, `auth()` throws this instead of answering `result`.
+    failure: Option<AuthError>,
     calls: Mutex<Vec<AuthCall>>,
     /// The fetch the latest `auth()` call was given for its own requests.
     fetch: Mutex<Option<FetchFn>>,
@@ -37,6 +39,17 @@ impl FakeOauth {
         Arc::new(Self {
             token: Mutex::new(token.map(str::to_owned)),
             result,
+            failure: None,
+            calls: Mutex::new(Vec::new()),
+            fetch: Mutex::new(None),
+        })
+    }
+
+    fn failing(error: AuthError) -> Arc<Self> {
+        Arc::new(Self {
+            token: Mutex::new(None),
+            result: AuthResult::Authorized,
+            failure: Some(error),
             calls: Mutex::new(Vec::new()),
             fetch: Mutex::new(None),
         })
@@ -58,6 +71,9 @@ impl TransportOAuth for Oauth {
             resource_metadata_url: options.resource_metadata_url.map(|url| url.to_string()),
             scope: options.scope,
         });
+        if let Some(error) = self.0.failure.clone() {
+            return Box::pin(async move { Err(error) });
+        }
         if self.0.result == AuthResult::Authorized {
             *self.0.token.lock().unwrap() = Some("at-1".to_owned());
         }
@@ -478,6 +494,31 @@ async fn a_401_stream_that_needs_a_browser_is_unauthorized_and_the_code_redeems_
         Some("http://127.0.0.1:9/prm")
     );
     assert_eq!(calls[1].scope.as_deref(), Some("read"));
+}
+
+#[tokio::test]
+async fn a_401_stream_whose_sign_in_throws_rejects_start_and_reports_the_error() {
+    let (base, mut requests) = protected_server(Streams::default()).await;
+    let oauth = FakeOauth::failing(AuthError::Other("discovery failed".to_owned()));
+    let (transport, mut events) = transport(
+        &base,
+        SseClientOptions {
+            oauth: Some(Arc::new(Oauth(Arc::clone(&oauth)))),
+            ..SseClientOptions::default()
+        },
+    );
+
+    let error = transport.start().await.unwrap_err();
+    assert_eq!(error.to_string(), "discovery failed");
+    match next_event(&mut events).await {
+        TransportEvent::Error(message) => assert_eq!(message, "discovery failed"),
+        other => panic!("expected an error, got {other:?}"),
+    }
+    // the stream is not opened again after a sign-in that threw
+    requests.recv().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(requests.try_recv().is_err());
+    assert_eq!(oauth.calls.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]
