@@ -57,3 +57,30 @@ fn reports_an_unknown_error_without_a_json_body() {
         Err("Device token request failed (HTTP 500): unknown error".to_string())
     );
 }
+
+#[test]
+fn a_null_error_description_falls_back_to_the_error_code() {
+    let body = json!({ "error": "invalid_grant", "error_description": null });
+    assert_eq!(
+        next_poll_interval(400, Some(&body), 5.0),
+        Err("Device token request failed (HTTP 400): invalid_grant".to_string())
+    );
+}
+
+#[test]
+fn an_empty_error_description_is_kept() {
+    let body = json!({ "error": "invalid_grant", "error_description": "" });
+    assert_eq!(
+        next_poll_interval(400, Some(&body), 5.0),
+        Err("Device token request failed (HTTP 400): ".to_string())
+    );
+}
+
+#[test]
+fn a_non_string_error_is_reported_as_its_value() {
+    let body = json!({ "error": 42 });
+    assert_eq!(
+        next_poll_interval(400, Some(&body), 5.0),
+        Err("Device token request failed (HTTP 400): 42".to_string())
+    );
+}
