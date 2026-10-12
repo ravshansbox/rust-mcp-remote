@@ -222,3 +222,43 @@ fn a_value_containing_an_equals_sign_survives_intact() {
         Some("AWSALB=aGVsbG8=")
     );
 }
+
+#[test]
+fn attribute_names_are_read_regardless_of_case() {
+    let mut jar = CookieJar::new();
+    jar.capture("https://mcp.example.com/", &["stick=1; PATH=/mcp"]);
+    jar.capture("https://mcp.example.com/", &["gone=1; path=/"]);
+    jar.capture("https://mcp.example.com/", &["gone=1;  MAX-AGE=0"]);
+
+    assert_eq!(
+        jar.header("https://mcp.example.com/mcp/messages")
+            .as_deref(),
+        Some("stick=1")
+    );
+    assert_eq!(jar.header("https://mcp.example.com/other"), None);
+}
+
+#[test]
+fn a_path_that_does_not_start_with_a_slash_falls_back_to_the_default() {
+    let mut jar = CookieJar::new();
+    jar.capture("https://mcp.example.com/app/sse", &["stick=1; Path=mcp"]);
+
+    assert_eq!(
+        jar.header("https://mcp.example.com/app/messages")
+            .as_deref(),
+        Some("stick=1")
+    );
+    assert_eq!(jar.header("https://mcp.example.com/mcp"), None);
+}
+
+#[test]
+fn a_negative_max_age_deletes_the_cookie() {
+    let mut jar = CookieJar::new();
+    jar.capture("https://mcp.example.com/mcp", &["stick=1; Path=/"]);
+    jar.capture(
+        "https://mcp.example.com/mcp",
+        &["stick=1; Path=/; Max-Age=-1"],
+    );
+
+    assert_eq!(jar.header("https://mcp.example.com/mcp"), None);
+}
