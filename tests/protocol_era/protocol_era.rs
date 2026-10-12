@@ -49,3 +49,23 @@ fn a_result_that_is_not_an_object_is_passed_through() {
         TranslatedResult::Result(json!("text"))
     );
 }
+
+#[test]
+fn a_result_type_that_is_not_a_string_is_reported_by_its_json_text() {
+    for (result_type, shown) in [
+        (json!(3), "3"),
+        (json!(null), "null"),
+        (json!(true), "true"),
+    ] {
+        let translated = translate_modern_result(json!({ "resultType": result_type }));
+
+        let TranslatedResult::Error { code, message } = translated else {
+            panic!("expected an error, got {translated:?}");
+        };
+        assert_eq!(code, -32603);
+        assert!(
+            message.ends_with(&format!(": {shown}")),
+            "unexpected message: {message}"
+        );
+    }
+}
