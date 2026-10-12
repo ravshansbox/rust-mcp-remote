@@ -325,3 +325,42 @@ async fn a_denial_without_a_description_falls_back_to_the_error_code() {
         AuthEvent::CodeFailed("Authorization failed: access_denied - access_denied".to_owned())
     );
 }
+
+#[tokio::test]
+async fn a_code_skips_a_caller_that_stopped_waiting() {
+    let server = start("/oauth/callback", &AuthEvents::new(), None).await;
+    // Registered as soon as it is created, then abandoned without being polled
+    drop(server.wait_for_auth_code());
+    let waiting = tokio::spawn(server.code_waiter().wait_for_auth_code());
+    get(format!(
+        "http://127.0.0.1:{}/oauth/callback?code=next",
+        server.actual_port
+    ))
+    .await;
+    assert_eq!(waiting.await.unwrap(), Ok(code("next", None)));
+}
+
+#[tokio::test]
+async fn an_empty_error_parameter_is_not_a_denial() {
+    let server = start("/oauth/callback", &AuthEvents::new(), None).await;
+    let (status, body) = get(format!(
+        "http://127.0.0.1:{}/oauth/callback?error=&code=c&state=s",
+        server.actual_port
+    ))
+    .await;
+    assert_eq!(status, 200);
+    assert!(body.contains("Authorization successful!"), "{body}");
+    assert_eq!(server.wait_for_auth_code().await, Ok(code("c", Some("s"))));
+}
+
+#[tokio::test]
+async fn an_empty_code_is_a_bad_request() {
+    let server = start("/oauth/callback", &AuthEvents::new(), None).await;
+    let (status, body) = get(format!(
+        "http://127.0.0.1:{}/oauth/callback?code=&state=s",
+        server.actual_port
+    ))
+    .await;
+    assert_eq!(status, 400);
+    assert_eq!(body, "Error: No authorization code received");
+}
