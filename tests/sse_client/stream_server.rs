@@ -1,5 +1,6 @@
 //! An HTTP/1.1 test server whose replies can hold an event stream open and push more to it.
 
+use std::fmt::Write as _;
 use std::sync::{Arc, Mutex};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -143,7 +144,7 @@ pub async fn serve(handler: Handler) -> (String, mpsc::UnboundedReceiver<Recorde
                             body.len()
                         );
                         for (name, value) in &headers {
-                            response.push_str(&format!("{name}: {value}\r\n"));
+                            let _ = write!(response, "{name}: {value}\r\n");
                         }
                         response.push_str("\r\n");
                         response.push_str(&body);

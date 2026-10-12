@@ -1,5 +1,6 @@
 //! A one-request-per-connection HTTP/1.1 server for driving the transport in tests.
 
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -103,10 +104,10 @@ pub async fn serve(handler: Handler) -> (String, mpsc::UnboundedReceiver<Recorde
                     .iter()
                     .any(|(_, value)| value == "text/event-stream");
                 if !streaming {
-                    response.push_str(&format!("content-length: {}\r\n", reply.body.len()));
+                    let _ = write!(response, "content-length: {}\r\n", reply.body.len());
                 }
                 for (name, value) in &reply.headers {
-                    response.push_str(&format!("{name}: {value}\r\n"));
+                    let _ = write!(response, "{name}: {value}\r\n");
                 }
                 response.push_str("\r\n");
                 response.push_str(&reply.body);
