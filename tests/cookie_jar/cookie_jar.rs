@@ -314,3 +314,25 @@ fn an_unparseable_url_is_ignored() {
 
     assert_eq!(jar.header("not a url"), None);
 }
+
+#[test]
+fn a_cookie_with_a_future_expires_date_is_kept_until_that_date() {
+    let now = Arc::new(Mutex::new(
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000),
+    ));
+    let clock = Arc::clone(&now);
+    let mut jar = CookieJar::with_clock(move || *clock.lock().unwrap());
+    jar.capture(
+        "https://mcp.example.com/mcp",
+        &["stick=1; Path=/; Expires=Tue, 14 Nov 2023 22:14:20 GMT"],
+    );
+
+    *now.lock().unwrap() += Duration::from_secs(59);
+    assert_eq!(
+        jar.header("https://mcp.example.com/mcp").as_deref(),
+        Some("stick=1")
+    );
+
+    *now.lock().unwrap() += Duration::from_secs(1);
+    assert_eq!(jar.header("https://mcp.example.com/mcp"), None);
+}
