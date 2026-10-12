@@ -207,3 +207,18 @@ fn field_names_are_case_sensitive() {
         ]
     );
 }
+
+#[test]
+fn a_lone_cr_at_the_end_of_a_chunk_still_ends_the_line() {
+    let mut parser = EventSourceParser::new();
+    assert!(parser.feed(b"data: a\r").is_empty());
+    assert_eq!(parser.feed(b"data: b\n\n"), vec![event(None, None, "a\nb")]);
+}
+
+#[test]
+fn a_crlf_split_across_chunks_is_one_line_end() {
+    let mut parser = EventSourceParser::new();
+    assert!(parser.feed(b"data: a\r").is_empty());
+    assert!(parser.feed(b"\ndata: b\r").is_empty());
+    assert_eq!(parser.feed(b"\n\r\n"), vec![event(None, None, "a\nb")]);
+}
