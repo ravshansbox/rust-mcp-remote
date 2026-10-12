@@ -25,7 +25,7 @@ fn lease_on_disk() -> Value {
     serde_json::from_str(&content).expect("lease is JSON")
 }
 
-fn write_lease(lease: Value) {
+fn write_lease(lease: &Value) {
     write_text_file(HASH, FILENAME, &lease.to_string()).expect("write lease");
 }
 
@@ -70,7 +70,7 @@ fn an_instance_that_is_still_working_keeps_its_lease() {
 #[test]
 fn a_lease_its_owner_died_holding_is_taken_over_at_once() {
     with_temporary_config_dir(|| {
-        write_lease(json!({ "pid": DEAD_PID, "nonce": "theirs", "at": now_millis() as u64 }));
+        write_lease(&json!({ "pid": DEAD_PID, "nonce": "theirs", "at": now_millis() as u64 }));
 
         assert!(!read_config_lease(HASH, FILENAME, TTL).expect("lease").live);
         assert!(
@@ -86,7 +86,7 @@ fn a_lease_its_owner_died_holding_is_taken_over_at_once() {
 fn a_live_owner_past_its_deadline_stops_holding_everyone_up() {
     with_temporary_config_dir(|| {
         let at = now_millis() - TTL.as_millis() - 1;
-        write_lease(json!({ "pid": std::process::id(), "nonce": "theirs", "at": at as u64 }));
+        write_lease(&json!({ "pid": std::process::id(), "nonce": "theirs", "at": at as u64 }));
 
         assert!(!read_config_lease(HASH, FILENAME, TTL).expect("lease").live);
         assert!(
@@ -186,7 +186,7 @@ fn debug_log_lines_while(action: impl FnOnce()) -> Vec<String> {
 #[test]
 fn clearing_an_abandoned_lease_is_logged_with_its_owner() {
     with_temporary_config_dir(|| {
-        write_lease(json!({ "pid": DEAD_PID, "nonce": "theirs", "at": now_millis() as u64 }));
+        write_lease(&json!({ "pid": DEAD_PID, "nonce": "theirs", "at": now_millis() as u64 }));
         let lines = debug_log_lines_while(|| {
             acquire_config_lease(HASH, FILENAME, TTL).expect("config dir");
         });

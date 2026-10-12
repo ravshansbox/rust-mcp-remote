@@ -56,7 +56,7 @@ async fn gives_up_quietly_when_nothing_answers() {
     assert_eq!(fetch_authorization_server_metadata("not a url").await, None);
 }
 
-fn json_reply(body: serde_json::Value) -> crate::test_server::Reply {
+fn json_reply(body: &serde_json::Value) -> crate::test_server::Reply {
     reply(
         200,
         &[("content-type", "application/json")],
@@ -74,10 +74,8 @@ async fn fetches_and_parses_the_metadata() {
         "response_types_supported": ["code"],
     });
     let served = metadata.clone();
-    let (base, mut requests) = serve(Arc::new(move |_: &RecordedRequest| {
-        json_reply(served.clone())
-    }))
-    .await;
+    let (base, mut requests) =
+        serve(Arc::new(move |_: &RecordedRequest| json_reply(&served))).await;
 
     assert_eq!(
         fetch_authorization_server_metadata(&format!("{base}/mcp")).await,
@@ -95,7 +93,7 @@ async fn falls_back_to_the_root_when_path_insertion_404s() {
     let served = metadata.clone();
     let (base, mut requests) = serve(Arc::new(move |request: &RecordedRequest| {
         if request.path == "/.well-known/oauth-authorization-server" {
-            json_reply(served.clone())
+            json_reply(&served)
         } else {
             reply(404, &[], "Not Found")
         }
@@ -117,7 +115,7 @@ async fn falls_back_to_the_root_when_path_insertion_404s() {
 async fn reaches_an_oidc_issuer_that_appends_the_well_known_segment() {
     let (base, _requests) = serve(Arc::new(|request: &RecordedRequest| {
         if request.path == "/auth/realms/myRealm/.well-known/openid-configuration" {
-            json_reply(json!({"issuer": "realm"}))
+            json_reply(&json!({"issuer": "realm"}))
         } else {
             reply(404, &[], "Not Found")
         }
@@ -133,7 +131,7 @@ async fn reaches_an_oidc_issuer_that_appends_the_well_known_segment() {
 #[tokio::test]
 async fn stops_at_the_first_candidate_that_answers() {
     let (base, mut requests) = serve(Arc::new(|_: &RecordedRequest| {
-        json_reply(json!({"issuer": "https://example.com/mcp"}))
+        json_reply(&json!({"issuer": "https://example.com/mcp"}))
     }))
     .await;
 
@@ -154,7 +152,7 @@ async fn follows_a_redirect_to_the_metadata_document() {
         if request.path == "/.well-known/oauth-authorization-server" {
             reply(302, &[("location", "/moved/metadata.json")], "")
         } else if request.path == "/moved/metadata.json" {
-            json_reply(json!({"issuer": "moved"}))
+            json_reply(&json!({"issuer": "moved"}))
         } else {
             reply(404, &[], "Not Found")
         }
@@ -237,10 +235,7 @@ async fn keeps_metadata_without_scopes_supported() {
         "token_endpoint": "https://example.com/oauth/token",
     });
     let served = metadata.clone();
-    let (base, _requests) = serve(Arc::new(move |_: &RecordedRequest| {
-        json_reply(served.clone())
-    }))
-    .await;
+    let (base, _requests) = serve(Arc::new(move |_: &RecordedRequest| json_reply(&served))).await;
 
     let fetched = fetch_authorization_server_metadata(&format!("{base}/mcp"))
         .await
@@ -253,10 +248,7 @@ async fn keeps_metadata_without_scopes_supported() {
 async fn keeps_empty_scopes_supported() {
     let metadata = json!({"issuer": "https://example.com", "scopes_supported": []});
     let served = metadata.clone();
-    let (base, _requests) = serve(Arc::new(move |_: &RecordedRequest| {
-        json_reply(served.clone())
-    }))
-    .await;
+    let (base, _requests) = serve(Arc::new(move |_: &RecordedRequest| json_reply(&served))).await;
 
     let fetched = fetch_authorization_server_metadata(&format!("{base}/mcp"))
         .await
@@ -270,7 +262,7 @@ async fn skips_a_candidate_whose_success_body_is_not_json() {
         if request.path == "/.well-known/oauth-authorization-server/mcp" {
             reply(200, &[("content-type", "application/json")], "not json")
         } else {
-            json_reply(json!({"issuer": "https://example.com"}))
+            json_reply(&json!({"issuer": "https://example.com"}))
         }
     }))
     .await;

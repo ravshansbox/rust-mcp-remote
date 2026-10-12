@@ -17,7 +17,7 @@ fn now_millis() -> u64 {
         .as_millis() as u64
 }
 
-fn write_lease(lease: serde_json::Value) {
+fn write_lease(lease: &serde_json::Value) {
     write_text_file(HASH, FILENAME, &lease.to_string()).expect("write lease");
 }
 
@@ -32,7 +32,7 @@ fn no_lease_on_disk_reads_as_none() {
 fn a_lease_held_by_a_running_owner_within_its_deadline_is_live() {
     with_temporary_config_dir(|| {
         let at = now_millis();
-        write_lease(json!({ "pid": std::process::id(), "nonce": "theirs", "at": at }));
+        write_lease(&json!({ "pid": std::process::id(), "nonce": "theirs", "at": at }));
 
         let lease = read_config_lease(HASH, FILENAME, TTL).expect("lease");
 
@@ -46,7 +46,7 @@ fn a_lease_held_by_a_running_owner_within_its_deadline_is_live() {
 #[test]
 fn a_lease_whose_owner_died_is_not_live() {
     with_temporary_config_dir(|| {
-        write_lease(json!({ "pid": DEAD_PID, "nonce": "theirs", "at": now_millis() }));
+        write_lease(&json!({ "pid": DEAD_PID, "nonce": "theirs", "at": now_millis() }));
 
         let lease = read_config_lease(HASH, FILENAME, TTL).expect("lease");
 
@@ -58,7 +58,7 @@ fn a_lease_whose_owner_died_is_not_live() {
 fn a_lease_held_past_its_deadline_is_not_live() {
     with_temporary_config_dir(|| {
         let at = now_millis() - TTL.as_millis() as u64 - 1;
-        write_lease(json!({ "pid": std::process::id(), "nonce": "theirs", "at": at }));
+        write_lease(&json!({ "pid": std::process::id(), "nonce": "theirs", "at": at }));
 
         let lease = read_config_lease(HASH, FILENAME, TTL).expect("lease");
 
@@ -87,7 +87,7 @@ fn a_lease_that_breaks_the_schema_reads_as_none() {
             json!({ "pid": std::process::id(), "at": at }),
             json!({ "pid": std::process::id(), "nonce": "theirs" }),
         ] {
-            write_lease(lease.clone());
+            write_lease(&lease);
 
             assert_eq!(read_config_lease(HASH, FILENAME, TTL), None, "{lease}");
         }

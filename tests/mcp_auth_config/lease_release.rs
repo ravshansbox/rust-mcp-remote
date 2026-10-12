@@ -6,14 +6,14 @@ use crate::with_temporary_config_dir;
 const HASH: &str = "lease-release-test";
 const FILENAME: &str = "refresh_in_progress.json";
 
-fn write_lease(lease: serde_json::Value) {
+fn write_lease(lease: &serde_json::Value) {
     write_text_file(HASH, FILENAME, &lease.to_string()).expect("write lease");
 }
 
 #[test]
 fn releasing_a_lease_this_instance_holds_removes_it() {
     with_temporary_config_dir(|| {
-        write_lease(json!({ "pid": std::process::id(), "nonce": "mine", "at": 1 }));
+        write_lease(&json!({ "pid": std::process::id(), "nonce": "mine", "at": 1 }));
 
         release_config_lease(HASH, FILENAME, "mine");
 
@@ -24,7 +24,7 @@ fn releasing_a_lease_this_instance_holds_removes_it() {
 #[test]
 fn releasing_a_lease_another_instance_took_leaves_it() {
     with_temporary_config_dir(|| {
-        write_lease(json!({ "pid": std::process::id(), "nonce": "theirs", "at": 1 }));
+        write_lease(&json!({ "pid": std::process::id(), "nonce": "theirs", "at": 1 }));
 
         release_config_lease(HASH, FILENAME, "mine");
 
