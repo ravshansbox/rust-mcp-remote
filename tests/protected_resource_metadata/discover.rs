@@ -85,7 +85,10 @@ async fn tries_the_path_specific_url_first_when_no_header_is_given() {
 
     let metadata = discover_protected_resource_metadata(&format!("{base}/mcp"), None).await;
 
-    assert!(metadata.is_some());
+    assert_eq!(
+        metadata,
+        Some(json!({"resource": "r", "authorization_servers": ["https://a"]}))
+    );
     assert_eq!(
         paths(&mut requests),
         ["/.well-known/oauth-protected-resource/mcp"]

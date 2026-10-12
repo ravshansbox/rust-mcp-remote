@@ -477,7 +477,13 @@ async fn a_request_for_more_input_on_an_exchange_already_over_is_not_answered_tw
     hook();
     let failed = next(&mut harness.client.sent).await;
     assert_eq!(failed["id"], "call-1");
-    assert!(failed.get("error").is_some());
+    assert_eq!(
+        failed["error"],
+        json!({
+            "code": -32001,
+            "message": "mcp-remote: the connection to the remote server dropped before this could be answered",
+        })
+    );
 
     // The server's answer arrives after the session already failed the request
     from_server(

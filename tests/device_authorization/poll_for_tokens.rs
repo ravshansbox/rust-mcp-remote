@@ -87,7 +87,10 @@ fn backs_off_permanently_after_slow_down() {
         |_, _| Ok(responses.next().unwrap()),
     );
 
-    assert!(tokens.is_ok());
+    assert_eq!(
+        tokens,
+        Ok(json!({ "access_token": "at", "token_type": "Bearer" }))
+    );
     assert_eq!(*sleeps.borrow(), vec![5.0, 10.0, 10.0]);
 }
 
