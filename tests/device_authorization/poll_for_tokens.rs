@@ -169,15 +169,35 @@ fn passes_a_transport_error_through() {
 
 #[test]
 fn rejects_a_success_body_that_is_not_tokens() {
-    let clock = RefCell::new(0.0);
-    let tokens = poll_for_tokens(
-        "https://auth.example.com/token",
-        &authorization(Some(1.0), None),
-        &request(),
-        || *clock.borrow(),
-        |seconds| *clock.borrow_mut() += seconds * 1000.0,
-        |_, _| Ok(response(200, json!({ "token_type": "Bearer" }))),
-    );
+    let bodies = [
+        json!({ "token_type": "Bearer" }).to_string(),
+        json!({ "access_token": "at" }).to_string(),
+        json!({ "access_token": 1, "token_type": "Bearer" }).to_string(),
+        "not json".to_string(),
+    ];
+    for body in bodies {
+        let clock = RefCell::new(0.0);
+        let mut attempts = 0;
+        let tokens = poll_for_tokens(
+            "https://auth.example.com/token",
+            &authorization(Some(1.0), None),
+            &request(),
+            || *clock.borrow(),
+            |seconds| *clock.borrow_mut() += seconds * 1000.0,
+            |_, _| {
+                attempts += 1;
+                Ok(FormResponse {
+                    status: 200,
+                    body: body.clone(),
+                })
+            },
+        );
 
-    assert!(tokens.is_err());
+        assert_eq!(
+            tokens,
+            Err("The token endpoint returned an invalid token response".to_string()),
+            "body: {body}"
+        );
+        assert_eq!(attempts, 1, "body: {body}");
+    }
 }
