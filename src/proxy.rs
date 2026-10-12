@@ -1341,12 +1341,11 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
             lock(&self.pending_reinit).remove(&id);
             return Err(error.to_string());
         }
-        let response = match tokio::time::timeout(self.options.reinitialize_timeout, answer).await {
-            Ok(Ok(response)) => response,
-            _ => {
-                lock(&self.pending_reinit).remove(&id);
-                return Err("timed out waiting for the re-initialize response".to_owned());
-            }
+        let Ok(Ok(response)) =
+            tokio::time::timeout(self.options.reinitialize_timeout, answer).await
+        else {
+            lock(&self.pending_reinit).remove(&id);
+            return Err("timed out waiting for the re-initialize response".to_owned());
         };
 
         if let Some(error) = response.get("error") {
