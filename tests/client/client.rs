@@ -3,9 +3,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rust_mcp_remote::client::{CONNECTION_CLOSED, REQUEST_TIMEOUT};
+use rust_mcp_remote::client::{CONNECTION_CLOSED, Client, ClientTransport, REQUEST_TIMEOUT};
 use rust_mcp_remote::stdio::TransportEvent;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::pair::{connected_pair, tools_server};
 
@@ -169,6 +169,55 @@ async fn a_response_with_an_unknown_id_is_reported_and_ignored() {
     );
     assert!(!client.is_closed());
     assert!(client.request("tools/list", None).await.is_ok());
+}
+
+#[tokio::test]
+async fn a_failed_answer_to_a_server_request_is_reported() {
+    let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
+    let transport = {
+        let events_tx = events_tx.clone();
+        ClientTransport {
+            send: Arc::new(move |message: Value| {
+                let Some(method) = message["method"].as_str() else {
+                    return Box::pin(async { Err("pipe closed".to_owned()) });
+                };
+                let result = match method {
+                    "initialize" => Some(json!({
+                        "protocolVersion": "2025-06-18", "capabilities": {},
+                        "serverInfo": {"name": "stub", "version": "1.0.0"},
+                    })),
+                    _ => None,
+                };
+                if let Some(result) = result {
+                    let _ = events_tx.send(TransportEvent::Message(
+                        json!({"jsonrpc": "2.0", "id": message["id"], "result": result}),
+                    ));
+                }
+                Box::pin(async { Ok(()) })
+            }),
+            close: Arc::new(|| {}),
+            set_protocol_version: Arc::new(|_| {}),
+        }
+    };
+    let client = Client::connect("mcp-remote", "0.0.0", transport, events_rx)
+        .await
+        .unwrap();
+    let (errors_tx, mut errors) = tokio::sync::mpsc::unbounded_channel();
+    client.set_on_error(move |error| {
+        let _ = errors_tx.send(error.to_owned());
+    });
+
+    events_tx
+        .send(TransportEvent::Message(
+            json!({"jsonrpc": "2.0", "id": "p", "method": "ping"}),
+        ))
+        .unwrap();
+
+    assert_eq!(
+        errors.recv().await.unwrap(),
+        "Failed to send response: pipe closed"
+    );
+    assert!(!client.is_closed());
 }
 
 #[tokio::test]
