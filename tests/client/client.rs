@@ -139,10 +139,36 @@ async fn a_request_that_times_out_is_cancelled() {
         .unwrap_err();
 
     assert_eq!(error.code, REQUEST_TIMEOUT);
+    assert_eq!(error.message, "Request timed out");
+    assert_eq!(error.data, Some(json!({"timeout": 20})));
     let request = pair.sent.recv().await.unwrap();
     let cancelled = pair.sent.recv().await.unwrap();
     assert_eq!(cancelled["method"], "notifications/cancelled");
     assert_eq!(cancelled["params"]["requestId"], request["id"]);
+    assert_eq!(cancelled["params"]["reason"], "Request timed out");
+}
+
+#[tokio::test]
+async fn a_response_with_an_unknown_id_is_reported_and_ignored() {
+    let pair = connected_pair(tools_server()).await;
+    let client = pair.client.unwrap();
+    let (errors_tx, mut errors) = tokio::sync::mpsc::unbounded_channel();
+    client.set_on_error(move |error| {
+        let _ = errors_tx.send(error.to_owned());
+    });
+
+    pair.server
+        .send(TransportEvent::Message(
+            json!({"jsonrpc": "2.0", "id": 999, "result": {}}),
+        ))
+        .unwrap();
+
+    assert_eq!(
+        errors.recv().await.unwrap(),
+        r#"Received a response for an unknown message ID: {"jsonrpc":"2.0","id":999,"result":{}}"#
+    );
+    assert!(!client.is_closed());
+    assert!(client.request("tools/list", None).await.is_ok());
 }
 
 #[tokio::test]
