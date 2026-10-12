@@ -1,32 +1,10 @@
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use rust_mcp_remote::logging::write_debug_log;
 use rust_mcp_remote::mcp_auth_config::config_file_path;
 use serde_json::json;
 
-use crate::GLOBAL_STATE as ENVIRONMENT;
+use crate::with_temporary_config_dir;
 
 const HASH: &str = "write-debug-log-test";
-
-fn with_temporary_config_dir<T>(action: impl FnOnce(&PathBuf) -> T) -> T {
-    let _guard = ENVIRONMENT
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time after epoch")
-        .as_nanos();
-    let directory: PathBuf = std::env::temp_dir().join(format!(
-        "mcp-remote-write-debug-log-{}-{nanos}",
-        std::process::id()
-    ));
-    unsafe { std::env::set_var("MCP_REMOTE_CONFIG_DIR", &directory) };
-    let result = action(&directory);
-    unsafe { std::env::remove_var("MCP_REMOTE_CONFIG_DIR") };
-    let _ = std::fs::remove_dir_all(&directory);
-    result
-}
 
 #[test]
 fn the_message_goes_to_the_console_and_to_the_debug_log() {
