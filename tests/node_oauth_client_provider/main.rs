@@ -6,6 +6,16 @@ pub static GLOBAL_STATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Runs `action` with `MCP_REMOTE_CONFIG_DIR` pointing at a fresh temporary directory,
 /// holding `GLOBAL_STATE` throughout and removing the directory afterwards.
 pub fn with_temporary_config_dir<T>(action: impl FnOnce() -> T) -> T {
+    with_config_dir(|directory| directory.clone(), action)
+}
+
+/// Creates a fresh temporary directory and runs `action` with `MCP_REMOTE_CONFIG_DIR`
+/// set to the path `prepare` returns for it, holding `GLOBAL_STATE` throughout and
+/// removing the directory afterwards.
+pub fn with_config_dir<T>(
+    prepare: impl FnOnce(&std::path::PathBuf) -> std::path::PathBuf,
+    action: impl FnOnce() -> T,
+) -> T {
     let _guard = GLOBAL_STATE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -18,7 +28,8 @@ pub fn with_temporary_config_dir<T>(action: impl FnOnce() -> T) -> T {
         std::process::id()
     ));
     std::fs::create_dir_all(&directory).expect("create temporary directory");
-    unsafe { std::env::set_var("MCP_REMOTE_CONFIG_DIR", &directory) };
+    let config_dir = prepare(&directory);
+    unsafe { std::env::set_var("MCP_REMOTE_CONFIG_DIR", &config_dir) };
     let result = action();
     unsafe { std::env::remove_var("MCP_REMOTE_CONFIG_DIR") };
     std::fs::remove_dir_all(&directory).expect("remove temporary directory");

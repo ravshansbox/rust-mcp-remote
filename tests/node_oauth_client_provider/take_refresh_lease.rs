@@ -1,40 +1,12 @@
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use rust_mcp_remote::mcp_auth_config::read_json_file;
 use rust_mcp_remote::node_oauth_client_provider::{
     NodeOAuthClientProvider, REFRESH_LEASE_FILE, UNCOORDINATED,
 };
 use serde_json::Value;
 
-use crate::GLOBAL_STATE as ENVIRONMENT;
+use crate::{with_config_dir, with_temporary_config_dir};
 
 const HASH: &str = "take-refresh-lease-test";
-
-fn with_config_dir<T>(prepare: impl FnOnce(&PathBuf) -> PathBuf, action: impl FnOnce() -> T) -> T {
-    let _guard = ENVIRONMENT
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time after epoch")
-        .as_nanos();
-    let directory: PathBuf = std::env::temp_dir().join(format!(
-        "mcp-remote-take-refresh-lease-{}-{nanos}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&directory).expect("create temporary directory");
-    let config_dir = prepare(&directory);
-    unsafe { std::env::set_var("MCP_REMOTE_CONFIG_DIR", &config_dir) };
-    let result = action();
-    unsafe { std::env::remove_var("MCP_REMOTE_CONFIG_DIR") };
-    std::fs::remove_dir_all(&directory).expect("remove temporary directory");
-    result
-}
-
-fn with_temporary_config_dir<T>(action: impl FnOnce() -> T) -> T {
-    with_config_dir(|directory| directory.clone(), action)
-}
 
 fn provider() -> NodeOAuthClientProvider {
     crate::provider_with_hash(HASH)
