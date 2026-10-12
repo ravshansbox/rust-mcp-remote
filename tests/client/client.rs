@@ -53,7 +53,7 @@ async fn an_unsupported_protocol_version_fails_the_connection() {
 }
 
 #[tokio::test]
-async fn an_error_response_fails_the_request_with_its_code_and_message() {
+async fn an_error_response_fails_the_request_with_its_code_message_and_data() {
     let mut pair = connected_pair(tools_server()).await;
     let client = pair.client.unwrap();
     pair.sent.recv().await.unwrap();
@@ -67,13 +67,15 @@ async fn an_error_response_fails_the_request_with_its_code_and_message() {
     pair.server
         .send(TransportEvent::Message(
             json!({"jsonrpc": "2.0", "id": sent["id"],
-            "error": {"code": -32601, "message": "Method not found"}}),
+            "error": {"code": -32601, "message": "Method not found",
+                "data": {"method": "resources/list"}}}),
         ))
         .unwrap();
 
     let error = request.await.unwrap().unwrap_err();
     assert_eq!(error.code, -32601);
     assert_eq!(error.to_string(), "MCP error -32601: Method not found");
+    assert_eq!(error.data, Some(json!({"method": "resources/list"})));
 }
 
 #[tokio::test]
