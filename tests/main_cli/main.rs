@@ -454,3 +454,40 @@ async fn trusts_the_certificates_in_node_extra_ca_certs() {
     assert!(requests.load(Ordering::SeqCst) > 0);
     let _ = std::fs::remove_file(ca_file);
 }
+
+#[tokio::test]
+async fn warns_about_and_skips_a_node_extra_ca_certs_file_that_cannot_be_loaded() {
+    use std::process::Stdio;
+    use std::sync::atomic::Ordering;
+
+    let (port, connections) = counting_404_server("127.0.0.1:0").await;
+    let missing = std::env::temp_dir().join(format!("rust-mcp-remote-test-missing-ca-{port}.pem"));
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_rust-mcp-remote"))
+        .arg(format!("http://127.0.0.1:{port}/mcp"))
+        .args(["--allow-http", "--transport", "http-only"])
+        .env(
+            "MCP_REMOTE_CONFIG_DIR",
+            std::env::temp_dir().join("rust-mcp-remote-main-cli-network"),
+        )
+        .env("NODE_EXTRA_CA_CERTS", &missing)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let _stdin = child.stdin.take();
+    let limit = std::time::Duration::from_secs(20);
+    let output = tokio::time::timeout(limit, child.wait_with_output())
+        .await
+        .expect("the proxy hung")
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let warning = format!(
+        "] Warning: Ignoring extra certs from `{}`, load failed: ",
+        missing.display()
+    );
+    assert!(stderr.contains(&warning), "{stderr}");
+    assert!(connections.load(Ordering::SeqCst) > 0);
+}
