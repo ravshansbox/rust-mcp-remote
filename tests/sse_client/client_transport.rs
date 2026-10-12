@@ -28,6 +28,8 @@ struct FakeOauth {
     token: Mutex<Option<String>>,
     result: AuthResult,
     calls: Mutex<Vec<AuthCall>>,
+    /// The fetch the latest `auth()` call was given for its own requests.
+    fetch: Mutex<Option<FetchFn>>,
 }
 
 impl FakeOauth {
@@ -36,6 +38,7 @@ impl FakeOauth {
             token: Mutex::new(token.map(str::to_owned)),
             result,
             calls: Mutex::new(Vec::new()),
+            fetch: Mutex::new(None),
         })
     }
 }
@@ -48,7 +51,8 @@ impl TransportOAuth for Oauth {
         Box::pin(async move { token.map(|token| json!({"access_token": token})) })
     }
 
-    fn auth(&self, options: AuthOptions) -> BoxFuture<Result<AuthResult, AuthError>> {
+    fn auth(&self, mut options: AuthOptions) -> BoxFuture<Result<AuthResult, AuthError>> {
+        *self.0.fetch.lock().unwrap() = options.fetch.take();
         self.0.calls.lock().unwrap().push(AuthCall {
             authorization_code: options.authorization_code,
             resource_metadata_url: options.resource_metadata_url.map(|url| url.to_string()),
@@ -237,8 +241,16 @@ async fn reconnects_after_the_stream_ends_with_the_interval_the_server_set() {
     .await;
     let (transport, mut events) = transport(&base, SseClientOptions::default());
     transport.start().await.unwrap();
-    requests.recv().await.unwrap();
+    assert_eq!(
+        requests
+            .recv()
+            .await
+            .unwrap()
+            .header("mcp-protocol-version"),
+        None
+    );
 
+    transport.set_protocol_version(Some("2025-06-18".to_owned()));
     streams.end_all();
     match next_event(&mut events).await {
         TransportEvent::Error(message) => assert_eq!(message, "SSE error: undefined"),
@@ -249,6 +261,7 @@ async fn reconnects_after_the_stream_ends_with_the_interval_the_server_set() {
         .unwrap()
         .unwrap();
     assert_eq!(again.method, "GET");
+    assert_eq!(again.header("mcp-protocol-version"), Some("2025-06-18"));
     transport.close();
 }
 
@@ -405,6 +418,38 @@ async fn signs_in_on_a_401_stream_and_opens_it_again() {
         Some("http://127.0.0.1:9/prm")
     );
     assert_eq!(calls[0].scope.as_deref(), Some("read"));
+    transport.close();
+}
+
+#[tokio::test]
+async fn sign_in_requests_carry_the_configured_headers() {
+    let (base, mut requests) = protected_server(Streams::default()).await;
+    let oauth = FakeOauth::new(None, AuthResult::Authorized);
+    let (transport, _events) = transport(
+        &base,
+        SseClientOptions {
+            headers: vec![("x-api-key".to_owned(), "secret".to_owned())],
+            oauth: Some(Arc::new(Oauth(Arc::clone(&oauth)))),
+            ..SseClientOptions::default()
+        },
+    );
+    transport.start().await.unwrap();
+    requests.recv().await.unwrap();
+    requests.recv().await.unwrap();
+
+    let fetch = oauth
+        .fetch
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("a fetch for auth()");
+    let url = Url::parse(&format!("{base}/.well-known/oauth-protected-resource")).unwrap();
+    fetch(reqwest::Request::new(reqwest::Method::GET, url))
+        .await
+        .unwrap();
+    let metadata = requests.recv().await.unwrap();
+    assert_eq!(metadata.path, "/.well-known/oauth-protected-resource");
+    assert_eq!(metadata.header("x-api-key"), Some("secret"));
     transport.close();
 }
 
