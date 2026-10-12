@@ -390,7 +390,14 @@ async fn a_non_interactive_sign_in_reconnects_once_without_a_callback() {
 }
 
 async fn connect_to_a_404(strategy: TransportStrategy) -> String {
-    let (base, _requests) = serve(Arc::new(|_: &RecordedRequest| reply(404, &[], "gone"))).await;
+    connect_to_a_status(404, strategy).await
+}
+
+async fn connect_to_a_status(status: u16, strategy: TransportStrategy) -> String {
+    let (base, _requests) = serve(Arc::new(move |_: &RecordedRequest| {
+        reply(status, &[], "gone")
+    }))
+    .await;
     let auth = FakeAuth::new(false);
     let mut options = options(&base);
     options.transport_strategy = strategy;
@@ -419,6 +426,22 @@ async fn an_http_first_strategy_falls_back_to_sse_on_a_404() {
     assert_eq!(
         connect_to_a_404(TransportStrategy::HttpFirst).await,
         "SSE error: Non-200 status code (404)"
+    );
+}
+
+#[tokio::test]
+async fn an_http_first_strategy_falls_back_to_sse_on_a_405() {
+    assert_eq!(
+        connect_to_a_status(405, TransportStrategy::HttpFirst).await,
+        "SSE error: Non-200 status code (405)"
+    );
+}
+
+#[tokio::test]
+async fn an_http_first_strategy_does_not_fall_back_on_a_500() {
+    assert_eq!(
+        connect_to_a_status(500, TransportStrategy::HttpFirst).await,
+        "Error POSTing to endpoint: gone"
     );
 }
 
