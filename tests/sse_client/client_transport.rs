@@ -561,3 +561,52 @@ async fn closing_twice_reports_close_once() {
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(events.try_recv().is_err());
 }
+
+#[tokio::test]
+async fn a_stream_that_cannot_connect_rejects_start_with_an_sse_error() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    drop(listener);
+    let (transport, mut events) = transport(&base, SseClientOptions::default());
+
+    let error = transport.start().await.unwrap_err();
+    assert!(error.to_string().starts_with("SSE error: "), "{error}");
+    assert_eq!(
+        next_event(&mut events).await,
+        TransportEvent::Error(error.to_string())
+    );
+    transport.close();
+}
+
+#[tokio::test]
+async fn ignores_events_of_other_types() {
+    let streams = Streams::default();
+    let handler_streams = streams.clone();
+    let (base, _requests) = serve(Arc::new(move |_: &Recorded| {
+        handler_streams.open(ENDPOINT_EVENT)
+    }))
+    .await;
+    let (transport, mut events) = transport(&base, SseClientOptions::default());
+    transport.start().await.unwrap();
+
+    streams.push("event: ping\ndata: not json\n\n");
+    let notification = json!({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"});
+    streams.push(&format!("event: message\ndata: {notification}\n\n"));
+    match next_event(&mut events).await {
+        TransportEvent::Message(message) => assert_eq!(message, notification),
+        other => panic!("expected a message, got {other:?}"),
+    }
+    transport.close();
+}
+
+#[tokio::test]
+async fn a_401_stream_without_a_provider_fails_as_a_non_200_status() {
+    let (base, mut requests) = protected_server(Streams::default()).await;
+    let (transport, _events) = transport(&base, SseClientOptions::default());
+
+    let error = transport.start().await.unwrap_err();
+    assert_eq!(error.to_string(), "SSE error: Non-200 status code (401)");
+    requests.recv().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(requests.try_recv().is_err());
+}
