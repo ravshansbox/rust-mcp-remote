@@ -187,3 +187,10 @@ fn a_signed_retry_value_is_an_error() {
         ]
     );
 }
+
+#[test]
+fn an_event_name_without_data_does_not_carry_over_to_the_next_event() {
+    let mut parser = EventSourceParser::new();
+    assert!(parser.feed(b"event: endpoint\n\n").is_empty());
+    assert_eq!(parser.feed(b"data: a\n\n"), vec![event(None, None, "a")]);
+}
