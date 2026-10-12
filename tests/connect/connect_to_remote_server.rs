@@ -597,6 +597,33 @@ async fn in_auto_mode_a_probe_the_server_fails_with_a_5xx_is_an_error() {
 }
 
 #[tokio::test]
+async fn in_auto_mode_a_probe_the_server_denies_with_a_403_is_an_error() {
+    let (outcome, methods) = connect_in_auto_mode(|| reply(403, &[], "denied")).await;
+
+    assert_eq!(
+        outcome,
+        Err("Version negotiation failed: the server denied access (HTTP 403)".to_owned())
+    );
+    assert_eq!(methods.len(), 1);
+}
+
+#[tokio::test]
+async fn in_auto_mode_a_probe_answered_with_an_unusable_content_type_is_an_error() {
+    let (outcome, methods) =
+        connect_in_auto_mode(|| reply(200, &[("content-type", "text/plain")], "hello")).await;
+
+    assert_eq!(
+        outcome,
+        Err(
+            "Version negotiation probe failed: the server answered with an unusable reply \
+             (Unexpected content type: text/plain)"
+                .to_owned()
+        )
+    );
+    assert_eq!(methods.len(), 1);
+}
+
+#[tokio::test]
 async fn in_with_client_mode_the_client_handshakes_on_the_main_transport_and_auth_completes_on_it()
 {
     let base = Arc::new(OnceLock::<String>::new());
