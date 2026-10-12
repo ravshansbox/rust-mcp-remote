@@ -992,6 +992,64 @@ async fn fetch_token_exchanges_the_code_with_stored_client_information() {
 }
 
 #[tokio::test]
+async fn fetch_token_refuses_an_unusable_code_exchange_unsent() {
+    let (base, mut requests) = auth_server(Arc::new(|_, _| None)).await;
+    let provider = TestProvider::new();
+    provider.store().code_verifier = Some("the-verifier".to_owned());
+    let with_code = |code| FetchTokenOptions {
+        authorization_code: Some(code),
+        ..Default::default()
+    };
+
+    // An empty code counts as no code at all.
+    assert_eq!(
+        fetch_token(&provider, &base, with_code(""))
+            .await
+            .unwrap_err(),
+        AuthError::Other(
+            "Either provider.prepareTokenRequest() or authorizationCode is required".to_owned()
+        )
+    );
+
+    // The authorization_code grant needs a redirect URL.
+    let no_redirect = TestProvider {
+        redirect_url: Some(None),
+        ..TestProvider::new()
+    };
+    assert_eq!(
+        fetch_token(&no_redirect, &base, with_code("the-code"))
+            .await
+            .unwrap_err(),
+        AuthError::Other("redirectUrl is required for authorization_code flow".to_owned())
+    );
+
+    // A foreign iss is refused when the server promises the parameter.
+    let metadata = json!({
+        "issuer": base,
+        "authorization_response_iss_parameter_supported": true,
+    });
+    assert_eq!(
+        fetch_token(
+            &provider,
+            &base,
+            FetchTokenOptions {
+                metadata: Some(&metadata),
+                iss: Some("https://evil.example"),
+                ..with_code("the-code")
+            },
+        )
+        .await
+        .unwrap_err(),
+        AuthError::IssuerMismatch {
+            kind: IssuerMismatchKind::AuthorizationResponse,
+            expected: base.clone(),
+            received: Some("https://evil.example".to_owned()),
+        }
+    );
+    assert!(drain(&mut requests).is_empty());
+}
+
+#[tokio::test]
 async fn exchange_authorization_checks_iss_before_sending_the_code() {
     let (base, mut requests) = auth_server(Arc::new(|_, _| None)).await;
     let metadata = json!({
