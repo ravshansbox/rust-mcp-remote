@@ -763,7 +763,7 @@ impl Inner {
         fetch_within_origin(&self.fetch, &self.url, method, headers, body, &self.closed).await
     }
 
-    fn unauthorized(&self, is_auth_retry: bool) -> TransportError {
+    fn unauthorized(is_auth_retry: bool) -> TransportError {
         if is_auth_retry {
             TransportError::Http {
                 status: 401,
@@ -954,7 +954,7 @@ impl Inner {
                     return self.send(message.clone(), true, step_up_retries).await;
                 }
                 let _ = response.bytes().await;
-                return Err(self.unauthorized(is_auth_retry));
+                return Err(Self::unauthorized(is_auth_retry));
             }
             let redirect = unfollowed_redirect(&self.url, &response);
             let challenge = (status.as_u16() == 403).then(|| {
@@ -1078,7 +1078,7 @@ impl Inner {
                                 .await;
                         }
                         let _ = response.bytes().await;
-                        return Err(self.unauthorized(is_auth_retry));
+                        return Err(Self::unauthorized(is_auth_retry));
                     }
                     if status.as_u16() == 403 {
                         let challenge = extract_www_authenticate_params(
