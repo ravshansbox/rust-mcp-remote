@@ -368,6 +368,54 @@ async fn add_client_authentication_repeats_the_granted_scope_on_refresh() {
 }
 
 #[tokio::test]
+async fn add_client_authentication_leaves_the_scope_alone_unless_a_refresh_lacks_one() {
+    let hash = unique_hash("scope-left-alone");
+    let provider = provider(
+        "https://auth.example.com",
+        &hash,
+        OAuthProviderOptions::default(),
+    );
+    write_json_file(&hash, "client_info.json", &json!({"client_id": "abc"})).unwrap();
+    write_json_file(
+        &hash,
+        "tokens.json",
+        &json!({"access_token": "a", "token_type": "Bearer", "scope": "granted"}),
+    )
+    .unwrap();
+    let token_url = Url::parse("https://auth.example.com/token").unwrap();
+    let pairs = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect()
+    };
+
+    let mut params = pairs(&[("grant_type", "refresh_token"), ("scope", "narrower")]);
+    provider
+        .add_client_authentication(&mut Vec::new(), &mut params, &token_url, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        params,
+        pairs(&[
+            ("grant_type", "refresh_token"),
+            ("scope", "narrower"),
+            ("client_id", "abc"),
+        ])
+    );
+
+    let mut params = pairs(&[("grant_type", "authorization_code")]);
+    provider
+        .add_client_authentication(&mut Vec::new(), &mut params, &token_url, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        params,
+        pairs(&[("grant_type", "authorization_code"), ("client_id", "abc")])
+    );
+}
+
+#[tokio::test]
 async fn the_transport_signs_in_on_a_401_and_finish_auth_lets_the_retry_through() {
     let (base, mut requests) = auth_server().await;
     let hash = unique_hash("transport");
