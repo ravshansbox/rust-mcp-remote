@@ -191,11 +191,11 @@ pub fn sanitize_url(raw: &str) -> Result<String, String> {
     }
     if !url.username().is_empty() {
         let username = encode_uri_component(url.username());
-        url.set_username(&username).map_err(|_| invalid())?;
+        url.set_username(&username).map_err(|()| invalid())?;
     }
     if let Some(password) = url.password().filter(|password| !password.is_empty()) {
         let password = encode_uri_component(password);
-        url.set_password(Some(&password)).map_err(|_| invalid())?;
+        url.set_password(Some(&password)).map_err(|()| invalid())?;
     }
     let path = url.path().to_owned();
     let (first, rest) = path.split_at(path.len().min(1));

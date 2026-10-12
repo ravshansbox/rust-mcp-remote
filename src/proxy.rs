@@ -677,8 +677,8 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
         // session that just went away. Cancelled before it was ever sent, there is nothing to
         // tell the server about.
         tokio::select! {
-            _ = self.await_session_resumption() => {}
-            _ = &mut cancelled => return Err(ASK_CANCELLED.to_owned()),
+            () = self.await_session_resumption() => {}
+            () = &mut cancelled => return Err(ASK_CANCELLED.to_owned()),
         }
 
         let (settle, answer) = oneshot::channel();
@@ -698,7 +698,7 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
                     Err("timed out waiting for the remote server to answer".to_owned())
                 }
             },
-            _ = &mut cancelled => {
+            () = &mut cancelled => {
                 lock(&self.pending_own).remove(&id);
                 let cancellation = json!({
                     "jsonrpc": "2.0",
@@ -731,8 +731,8 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
     /// Sleeps for `duration`, returning whether there is still a connection worth working on.
     async fn pause(&self, duration: Duration) -> bool {
         tokio::select! {
-            _ = tokio::time::sleep(duration) => !self.is_closed(),
-            _ = self.wait_closed() => false,
+            () = tokio::time::sleep(duration) => !self.is_closed(),
+            () = self.wait_closed() => false,
         }
     }
 
@@ -774,7 +774,7 @@ impl<C: ProxyTransport, S: ProxyTransport> Shared<C, S> {
                 short_lived_streams = 0;
                 tokio::select! {
                     _ = generation.changed() => continue,
-                    _ = self.wait_closed() => return,
+                    () = self.wait_closed() => return,
                 }
             };
 

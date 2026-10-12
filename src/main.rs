@@ -134,7 +134,7 @@ async fn run_proxy(args: CommandLineArgs) -> Result<(), String> {
         },
     );
     tokio::select! {
-        _ = proxy => {}
+        () = proxy => {}
         _ = tokio::signal::ctrl_c() => {}
     }
     log("\nShutting down...", &[]);

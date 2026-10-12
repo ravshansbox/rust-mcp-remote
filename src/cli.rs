@@ -223,7 +223,7 @@ pub fn setup_signal_handlers(cleanup: impl FnOnce() + Send + 'static) {
         };
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {}
-            _ = stdin_ended => {}
+            () = stdin_ended => {}
         }
         log("\nShutting down...", &[]);
         cleanup();
