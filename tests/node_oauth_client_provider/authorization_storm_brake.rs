@@ -1,18 +1,6 @@
 use rust_mcp_remote::node_oauth_client_provider::AuthorizationStormBrake;
 
 #[test]
-fn five_sign_ins_inside_thirty_seconds_are_allowed() {
-    let mut brake = AuthorizationStormBrake::default();
-    for start in 0..5 {
-        assert!(
-            brake
-                .guard_against_authorization_storm(1_000.0 + start as f64)
-                .is_ok()
-        );
-    }
-}
-
-#[test]
 fn the_sixth_sign_in_inside_thirty_seconds_is_stopped() {
     let mut brake = AuthorizationStormBrake::default();
     for start in 0..5 {

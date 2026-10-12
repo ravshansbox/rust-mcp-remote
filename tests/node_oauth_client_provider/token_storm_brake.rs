@@ -1,18 +1,6 @@
 use rust_mcp_remote::node_oauth_client_provider::TokenStormBrake;
 
 #[test]
-fn twenty_token_writes_inside_thirty_seconds_are_allowed() {
-    let mut brake = TokenStormBrake::default();
-    for write in 0..20 {
-        assert!(
-            brake
-                .guard_against_token_storm(1_000.0 + write as f64)
-                .is_ok()
-        );
-    }
-}
-
-#[test]
 fn the_twenty_first_token_write_inside_thirty_seconds_is_stopped() {
     let mut brake = TokenStormBrake::default();
     for write in 0..20 {
