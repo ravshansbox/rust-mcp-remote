@@ -28,6 +28,11 @@ async fn connecting_initializes_and_then_announces_it() {
         json!({"jsonrpc": "2.0", "method": "notifications/initialized"})
     );
     assert_eq!(client.server_version().unwrap()["name"], "stub");
+    assert_eq!(
+        *pair.protocol_versions.lock().unwrap(),
+        [Some("2025-06-18".to_owned())],
+        "the transport is told the negotiated version"
+    );
 }
 
 #[tokio::test]
@@ -49,6 +54,10 @@ async fn an_unsupported_protocol_version_fails_the_connection() {
         pair.closes.load(std::sync::atomic::Ordering::SeqCst),
         1,
         "the transport is closed"
+    );
+    assert!(
+        pair.protocol_versions.lock().unwrap().is_empty(),
+        "the transport is never told an unsupported version"
     );
 }
 
