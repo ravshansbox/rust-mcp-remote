@@ -1,3 +1,4 @@
+use crate::console_text;
 use rust_mcp_remote::utils::MessageTransformer;
 use serde_json::{Value, json};
 
@@ -89,7 +90,7 @@ fn failing_transform_forwards_the_message_unchanged_and_logs() {
     let response = transformer.intercept_response_to(&mut console, json!({"id": 1, "result": {}}));
     assert_eq!(request, Some(json!({"id": 1, "method": "ping"})));
     assert_eq!(response, json!({"id": 1, "result": {}}));
-    let output = String::from_utf8(console).unwrap();
+    let output = console_text(console);
     assert!(output.contains("Error transforming message, forwarding it unchanged: boom"));
     assert!(output.contains("Error transforming message, forwarding it unchanged: bang"));
 }

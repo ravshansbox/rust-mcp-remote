@@ -1,4 +1,4 @@
-use crate::arguments;
+use crate::{arguments, console_text};
 use rust_mcp_remote::utils::parse_static_oauth_client_metadata_to;
 use serde_json::json;
 
@@ -19,7 +19,7 @@ fn parses_and_logs_inline_metadata() {
     assert_eq!(metadata, Some(json!({"scope": "read"})));
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!("[{pid}] Using static OAuth client metadata from string\n")
     );
 }
@@ -51,7 +51,7 @@ fn reads_and_logs_metadata_from_a_file() {
     assert_eq!(metadata, Some(json!({"client_name": "Test"})));
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{pid}] Using static OAuth client metadata from file: {}\n",
             file_path.display()

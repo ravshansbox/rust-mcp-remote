@@ -1,4 +1,4 @@
-use crate::arguments;
+use crate::{arguments, console_text};
 use rust_mcp_remote::utils::parse_token_endpoint_to;
 
 fn parse(
@@ -7,7 +7,7 @@ fn parse(
 ) -> (Result<Option<String>, String>, String) {
     let mut console = Vec::new();
     let result = parse_token_endpoint_to(&mut console, &arguments(values), use_client_credentials);
-    (result, String::from_utf8(console).expect("utf8"))
+    (result, console_text(console))
 }
 
 #[test]

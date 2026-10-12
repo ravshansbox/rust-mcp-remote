@@ -1,4 +1,4 @@
-use crate::arguments;
+use crate::{arguments, console_text};
 use rust_mcp_remote::utils::{
     parse_client_credentials_to, parse_cookies_enabled_to, parse_device_code_to,
 };
@@ -15,7 +15,7 @@ fn disables_cookies_and_logs() {
     assert!(!cookies_enabled);
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!("[{pid}] Cookies disabled; requests will not carry session stickiness\n")
     );
 }
@@ -32,7 +32,7 @@ fn uses_the_device_grant_and_logs() {
     assert!(use_device_code);
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{pid}] Using the OAuth device grant; no browser will be opened on this machine\n"
         )
@@ -51,7 +51,7 @@ fn uses_the_client_credentials_grant_and_logs() {
     assert!(use_client_credentials);
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{pid}] Using the OAuth client_credentials grant; no browser will be opened and no user will be asked\n"
         )

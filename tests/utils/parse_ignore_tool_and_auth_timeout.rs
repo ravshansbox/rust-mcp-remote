@@ -1,4 +1,4 @@
-use crate::arguments;
+use crate::{arguments, console_text};
 use rust_mcp_remote::utils::{parse_auth_timeout_to, parse_ignored_tools_to};
 
 #[test]
@@ -23,7 +23,7 @@ fn collects_ignored_tools_and_removes_them_from_arguments() {
     );
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!("[{pid}] Ignoring tool: delete*\n[{pid}] Ignoring tool: write\n")
     );
 }
@@ -40,7 +40,7 @@ fn uses_a_positive_auth_timeout_in_milliseconds() {
     assert_eq!(auth_timeout_ms, 45_000);
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!("[{pid}] Using auth callback timeout: 45 seconds\n")
     );
 }
@@ -58,7 +58,7 @@ fn ignores_an_invalid_auth_timeout() {
         assert_eq!(auth_timeout_ms, 30_000);
         let pid = std::process::id();
         assert_eq!(
-            String::from_utf8(console).expect("utf8"),
+            console_text(console),
             format!(
                 "[{pid}] Warning: Ignoring invalid auth timeout value: {raw}. Must be a positive number.\n"
             )

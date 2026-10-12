@@ -1,4 +1,4 @@
-use crate::arguments;
+use crate::{arguments, console_text};
 use rust_mcp_remote::utils::{DEFAULT_CALLBACK_PATH, parse_callback_path_to};
 
 #[test]
@@ -13,7 +13,7 @@ fn uses_and_logs_a_valid_callback_path() {
     assert_eq!(callback_path, "/custom/callback");
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!("[{pid}] Using callback path: /custom/callback\n")
     );
 }
@@ -30,7 +30,7 @@ fn warns_about_a_path_without_a_leading_slash() {
     assert_eq!(callback_path, DEFAULT_CALLBACK_PATH);
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{pid}] Warning: Ignoring invalid callback path: callback. It must start with '/'.\n"
         )
@@ -50,7 +50,7 @@ fn warns_about_reserved_coordination_paths() {
         assert_eq!(callback_path, DEFAULT_CALLBACK_PATH);
         let pid = std::process::id();
         assert_eq!(
-            String::from_utf8(console).expect("utf8"),
+            console_text(console),
             format!(
                 "[{pid}] Warning: Ignoring reserved callback path: {reserved}. It is used to coordinate concurrent instances.\n"
             )

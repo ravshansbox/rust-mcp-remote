@@ -1,4 +1,4 @@
-use crate::arguments;
+use crate::{arguments, console_text};
 use rust_mcp_remote::utils::{NetworkOptions, parse_network_options_to};
 
 #[test]
@@ -30,7 +30,7 @@ fn parses_timeouts_and_ipv4_and_logs_them() {
     );
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{pid}] Restricting connections to IPv4\n\
              [{pid}] Using connect timeout: 1.5 seconds\n\
@@ -53,7 +53,7 @@ fn logs_disabled_headers_timeout_and_seconds_body_timeout() {
     assert_eq!(options.headers_timeout_ms, Some(0));
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{pid}] Using body timeout: 0.001 seconds\n\
              [{pid}] Using headers timeout: disabled\n"
@@ -73,7 +73,7 @@ fn writes_warnings_before_logs_and_nothing_without_flags() {
     assert_eq!(options.connect_timeout_ms, None);
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{pid}] Warning: Ignoring invalid --connect-timeout value: 0. Must be a positive number of seconds.\n\
              [{pid}] Restricting connections to IPv4\n"

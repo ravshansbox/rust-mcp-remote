@@ -1,4 +1,4 @@
-use crate::arguments;
+use crate::{arguments, console_text};
 use rust_mcp_remote::utils::parse_client_metadata_url_to;
 
 #[test]
@@ -20,7 +20,7 @@ fn uses_and_logs_a_trimmed_valid_url() {
     );
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{pid}] Using client metadata document: https://client.example.com/metadata.json\n"
         )
@@ -43,7 +43,7 @@ fn warns_about_an_invalid_url() {
     assert_eq!(client_metadata_url, None);
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{pid}] Warning: Ignoring invalid client metadata URL: http://client.example.com/metadata.json. It must be an HTTPS URL with a path.\n"
         )

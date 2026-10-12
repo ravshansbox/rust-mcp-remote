@@ -1,4 +1,4 @@
-use crate::arguments;
+use crate::{arguments, console_text};
 use rust_mcp_remote::utils::{TransportStrategy, parse_transport_strategy_to};
 
 #[test]
@@ -13,7 +13,7 @@ fn uses_and_logs_a_valid_transport_strategy() {
     assert_eq!(strategy, TransportStrategy::SseOnly);
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!("[{pid}] Using transport strategy: sse-only\n")
     );
 }
@@ -30,7 +30,7 @@ fn warns_about_an_invalid_strategy_and_keeps_the_default() {
     assert_eq!(strategy, TransportStrategy::HttpFirst);
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{pid}] Warning: Ignoring invalid transport strategy: websocket. Valid values are: sse-only, http-only, sse-first, http-first\n"
         )

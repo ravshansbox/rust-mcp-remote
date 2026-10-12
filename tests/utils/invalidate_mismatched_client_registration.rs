@@ -6,7 +6,7 @@ use rust_mcp_remote::utils::{
     invalidate_mismatched_client_registration, invalidate_mismatched_client_registration_to,
 };
 
-use crate::GLOBAL_STATE as ENVIRONMENT;
+use crate::{GLOBAL_STATE as ENVIRONMENT, console_text};
 
 const HASH: &str = "invalidate-test";
 const FILENAME: &str = "client_info.json";
@@ -97,7 +97,7 @@ fn console_output(contents: &str, redirect_url: &str) -> String {
         write_text_file(HASH, FILENAME, contents).expect("write registration");
         let mut console = Vec::new();
         invalidate_mismatched_client_registration_to(&mut console, HASH, redirect_url);
-        String::from_utf8(console).expect("utf8")
+        console_text(console)
     })
 }
 

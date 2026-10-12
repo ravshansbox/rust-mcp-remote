@@ -1,9 +1,5 @@
-use crate::arguments;
+use crate::{arguments, console_text};
 use rust_mcp_remote::utils::{parse_resource_to, parse_use_id_token_to};
-
-fn output(console: Vec<u8>) -> String {
-    String::from_utf8(console).expect("utf8")
-}
 
 #[test]
 fn uses_the_id_token_and_logs() {
@@ -17,7 +13,7 @@ fn uses_the_id_token_and_logs() {
     assert!(use_id_token);
     let pid = std::process::id();
     assert_eq!(
-        output(console),
+        console_text(console),
         format!("[{pid}] Using the ID token as the bearer credential\n")
     );
 }
@@ -29,7 +25,7 @@ fn does_not_use_the_id_token_by_default() {
     let use_id_token = parse_use_id_token_to(&mut console, &arguments(&["https://example.com"]));
 
     assert!(!use_id_token);
-    assert_eq!(output(console), "");
+    assert_eq!(console_text(console), "");
 }
 
 #[test]
@@ -51,7 +47,7 @@ fn uses_a_trimmed_resource_and_logs() {
     );
     let pid = std::process::id();
     assert_eq!(
-        output(console),
+        console_text(console),
         format!("[{pid}] Using authorize resource: https://example.com/mcp\n")
     );
 }
@@ -69,7 +65,7 @@ fn rejects_a_relative_resource() {
         parsed,
         Err("Invalid --resource value: \"/mcp\". RFC 8707 requires an absolute URI, e.g. https://example.com/mcp".to_string())
     );
-    assert_eq!(output(console), "");
+    assert_eq!(console_text(console), "");
 }
 
 #[test]
@@ -84,7 +80,7 @@ fn an_empty_resource_disables_the_parameter() {
     assert_eq!(parsed, Ok((None, true)));
     let pid = std::process::id();
     assert_eq!(
-        output(console),
+        console_text(console),
         format!(
             "[{pid}] Resource parameter disabled - it will be omitted from authorization and token requests\n"
         )
@@ -108,7 +104,7 @@ fn disabling_overrides_a_set_resource() {
     assert_eq!(parsed, Ok((None, true)));
     let pid = std::process::id();
     assert_eq!(
-        output(console),
+        console_text(console),
         format!(
             "[{pid}] Warning: --disable-resource-parameter overrides --resource https://example.com/mcp; the resource parameter will be omitted.\n[{pid}] Resource parameter disabled - it will be omitted from authorization and token requests\n"
         )
@@ -125,5 +121,5 @@ fn has_no_resource_by_default() {
     );
 
     assert_eq!(parsed, Ok((None, false)));
-    assert_eq!(output(console), "");
+    assert_eq!(console_text(console), "");
 }

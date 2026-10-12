@@ -1,4 +1,4 @@
-use crate::arguments;
+use crate::{arguments, console_text};
 use rust_mcp_remote::protocol_era::ProtocolMode;
 use rust_mcp_remote::utils::parse_protocol_mode_to;
 
@@ -14,7 +14,7 @@ fn uses_and_logs_a_valid_protocol_mode() {
     assert_eq!(mode, ProtocolMode::Auto);
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!("[{pid}] Using protocol mode: auto\n")
     );
 }
@@ -31,7 +31,7 @@ fn warns_about_an_invalid_mode_and_keeps_legacy() {
     assert_eq!(mode, ProtocolMode::Legacy);
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{pid}] Warning: Ignoring invalid protocol mode: modern. Valid values are: legacy, auto\n"
         )
@@ -63,7 +63,7 @@ fn logs_an_explicit_legacy_mode() {
     assert_eq!(ProtocolMode::Legacy.as_str(), "legacy");
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!("[{pid}] Using protocol mode: legacy\n")
     );
 }

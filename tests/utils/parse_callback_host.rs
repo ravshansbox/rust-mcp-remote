@@ -1,4 +1,4 @@
-use crate::arguments;
+use crate::{arguments, console_text};
 use rust_mcp_remote::utils::parse_callback_host_to;
 
 #[test]
@@ -13,7 +13,7 @@ fn uses_and_logs_an_explicit_host() {
     assert_eq!(host, "127.0.0.1");
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!("[{pid}] Using callback hostname: 127.0.0.1\n")
     );
 }

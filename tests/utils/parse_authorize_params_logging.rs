@@ -1,4 +1,4 @@
-use crate::arguments;
+use crate::{arguments, console_text};
 use rust_mcp_remote::utils::parse_authorize_params_to;
 
 #[test]
@@ -16,7 +16,7 @@ fn warns_that_a_resource_param_only_reaches_the_authorization_request() {
         Some("https://api.example.com")
     );
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{}] Warning: --authorize-param resource=... only applies to the authorization request. Use --resource so the token request agrees.\n",
             std::process::id()

@@ -1,4 +1,4 @@
-use crate::arguments;
+use crate::{arguments, console_text};
 use rust_mcp_remote::utils::parse_seconds_option_to;
 
 #[test]
@@ -14,7 +14,7 @@ fn warns_about_an_invalid_positive_duration() {
 
     assert_eq!(result, None);
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{}] Warning: Ignoring invalid --connect-timeout value: abc. Must be a positive number of seconds.\n",
             std::process::id()
@@ -35,7 +35,7 @@ fn warns_about_an_invalid_non_negative_duration() {
 
     assert_eq!(result, None);
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{}] Warning: Ignoring invalid --body-timeout value: -1. Must be a non-negative number of seconds.\n",
             std::process::id()

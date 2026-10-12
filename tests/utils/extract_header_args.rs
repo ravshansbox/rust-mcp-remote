@@ -1,4 +1,4 @@
-use crate::{arguments, pairs};
+use crate::{arguments, console_text, pairs};
 use rust_mcp_remote::utils::extract_header_args_to;
 
 #[test]
@@ -35,7 +35,7 @@ fn warns_about_a_malformed_header_without_echoing_it() {
     assert!(headers.is_empty());
     assert_eq!(args, arguments(&["https://example.com/mcp"]));
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{}] Warning: ignoring a --header argument that is not in Name:Value form\n",
             std::process::id()
@@ -78,7 +78,7 @@ fn merges_header_file_values_in_argument_order() {
     );
     assert_eq!(args, arguments(&["https://example.com/mcp"]));
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{}] Loaded 2 header(s) from {path_text}\n",
             std::process::id()

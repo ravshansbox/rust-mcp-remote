@@ -1,3 +1,4 @@
+use crate::console_text;
 use rust_mcp_remote::utils::substitute_env_vars_to;
 
 #[test]
@@ -9,7 +10,7 @@ fn logs_each_replaced_placeholder() {
 
     assert_eq!(result, "Bearer abc");
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{}] Replacing ${{RMR_LOG_TEST_TOKEN}} with environment value in headers\n",
             std::process::id()
@@ -29,7 +30,7 @@ fn warns_about_a_missing_variable() {
 
     assert_eq!(result, "${RMR_LOG_TEST_MISSING}");
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{}] Warning: Environment variable 'RMR_LOG_TEST_MISSING' not found for static OAuth client info; leaving ${{RMR_LOG_TEST_MISSING}} as it is.\n",
             std::process::id()

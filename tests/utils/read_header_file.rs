@@ -1,4 +1,4 @@
-use crate::pairs;
+use crate::{console_text, pairs};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -37,7 +37,7 @@ fn reads_one_header_per_line_and_skips_blanks_and_comments() {
         pairs(&[("Authorization", "Bearer secret"), ("X-Tenant", "acme")])
     );
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{pid}] Loaded 2 header(s) from {path}\n",
             pid = std::process::id(),
@@ -65,7 +65,7 @@ fn warns_by_line_number_about_lines_that_are_not_headers() {
 
     assert_eq!(headers, pairs(&[("A", "1"), ("B", "2")]));
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{pid}] Warning: ignoring line 2 of {path}, which is not in Name:Value form\n[{pid}] Loaded 2 header(s) from {path}\n",
             pid = std::process::id(),

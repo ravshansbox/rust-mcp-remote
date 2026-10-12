@@ -1,4 +1,4 @@
-use crate::arguments;
+use crate::{arguments, console_text};
 use rust_mcp_remote::utils::{KeepAliveConfig, parse_keep_alive_to};
 
 #[test]
@@ -71,7 +71,7 @@ fn invalid_ping_interval_warns_and_leaves_keep_alive_off() {
     );
     let pid = std::process::id();
     assert_eq!(
-        String::from_utf8(console).expect("utf8"),
+        console_text(console),
         format!(
             "[{pid}] Warning: Ignoring invalid --ping-interval value: 0. Must be a positive number of seconds.\n"
         )
