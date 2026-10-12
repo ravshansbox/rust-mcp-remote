@@ -394,8 +394,16 @@ async fn connect_to_a_404(strategy: TransportStrategy) -> String {
 }
 
 async fn connect_to_a_status(status: u16, strategy: TransportStrategy) -> String {
+    connect_to_a_reply(status, "gone", strategy).await
+}
+
+async fn connect_to_a_reply(
+    status: u16,
+    body: &'static str,
+    strategy: TransportStrategy,
+) -> String {
     let (base, _requests) = serve(Arc::new(move |_: &RecordedRequest| {
-        reply(status, &[], "gone")
+        reply(status, &[], body)
     }))
     .await;
     let auth = FakeAuth::new(false);
@@ -442,6 +450,15 @@ async fn an_http_first_strategy_does_not_fall_back_on_a_500() {
     assert_eq!(
         connect_to_a_status(500, TransportStrategy::HttpFirst).await,
         "Error POSTing to endpoint: gone"
+    );
+}
+
+#[tokio::test]
+async fn an_http_first_strategy_falls_back_on_a_500_whose_message_says_not_found() {
+    // The error text is matched as well as the status, as in the TS port
+    assert_eq!(
+        connect_to_a_reply(500, "Not Found", TransportStrategy::HttpFirst).await,
+        "SSE error: Non-200 status code (500)"
     );
 }
 
