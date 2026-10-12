@@ -68,6 +68,24 @@ fn exceeding_the_maximum_size_is_an_error_and_clears_the_buffer() {
 }
 
 #[test]
+fn a_buffer_may_fill_up_to_exactly_the_maximum_size() {
+    let line = b"{\"jsonrpc\":\"2.0\",\"method\":\"a\"}\n";
+    let mut buffer = ReadBuffer::with_max_buffer_size(line.len());
+    buffer.append(&line[..10]).unwrap();
+    buffer.append(&line[10..]).unwrap();
+    assert_eq!(buffer.read_message().unwrap().unwrap()["method"], "a");
+
+    let mut buffer = ReadBuffer::with_max_buffer_size(line.len() - 1);
+    assert_eq!(
+        buffer.append(line),
+        Err(format!(
+            "ReadBuffer exceeded maximum size of {} bytes",
+            line.len() - 1
+        ))
+    );
+}
+
+#[test]
 fn multibyte_character_split_across_chunks_is_joined() {
     let mut buffer = ReadBuffer::default();
     let line = "{\"jsonrpc\":\"2.0\",\"method\":\"é\"}\n".as_bytes();
