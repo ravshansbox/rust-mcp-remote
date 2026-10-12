@@ -263,3 +263,31 @@ async fn keeps_empty_scopes_supported() {
         .unwrap();
     assert_eq!(fetched["scopes_supported"], json!([]));
 }
+
+#[tokio::test]
+async fn skips_a_candidate_whose_success_body_is_not_json() {
+    let (base, mut requests) = serve(Arc::new(|request: &RecordedRequest| {
+        if request.path == "/.well-known/oauth-authorization-server/mcp" {
+            reply(200, &[("content-type", "application/json")], "not json")
+        } else {
+            json_reply(json!({"issuer": "https://example.com"}))
+        }
+    }))
+    .await;
+
+    assert_eq!(
+        fetch_authorization_server_metadata(&format!("{base}/mcp")).await,
+        Some(json!({"issuer": "https://example.com"}))
+    );
+    let mut paths = Vec::new();
+    while let Ok(request) = requests.try_recv() {
+        paths.push(request.path);
+    }
+    assert_eq!(
+        paths,
+        [
+            "/.well-known/oauth-authorization-server/mcp",
+            "/.well-known/oauth-authorization-server",
+        ]
+    );
+}
