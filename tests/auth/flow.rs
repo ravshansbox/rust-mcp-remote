@@ -40,6 +40,7 @@ struct TestProvider {
     /// When set, replaces the default redirect URL and client metadata.
     redirect_url: Option<Option<String>>,
     client_metadata: Option<Value>,
+    client_metadata_url: Option<String>,
 }
 
 impl TestProvider {
@@ -51,6 +52,7 @@ impl TestProvider {
             resource_override: None,
             redirect_url: None,
             client_metadata: None,
+            client_metadata_url: None,
         }
     }
 
@@ -74,6 +76,10 @@ impl OAuthClientProvider for TestProvider {
                 "token_endpoint_auth_method": "none",
             })
         })
+    }
+
+    fn client_metadata_url(&self) -> Option<String> {
+        self.client_metadata_url.clone()
     }
 
     async fn state(&self) -> Result<Option<String>, AuthError> {
@@ -570,6 +576,91 @@ async fn a_provider_that_cannot_save_client_information_never_registers() {
 
     let paths: Vec<String> = drain(&mut requests).into_iter().map(|r| r.path).collect();
     assert!(!paths.contains(&"/register".to_owned()), "{paths:?}");
+}
+
+#[tokio::test]
+async fn a_client_metadata_url_is_the_client_id_when_the_server_supports_it() {
+    let metadata_url = "https://client.example/oauth/metadata.json";
+    let with_url = |url: &str| TestProvider {
+        client_metadata_url: Some(url.to_owned()),
+        ..TestProvider::new()
+    };
+    let (base, mut requests) = auth_server(Arc::new(|base, request| {
+        (request.path == "/.well-known/oauth-authorization-server").then(|| {
+            reply(
+                200,
+                &[JSON],
+                &json!({
+                    "issuer": base,
+                    "authorization_endpoint": format!("{base}/authorize"),
+                    "token_endpoint": format!("{base}/token"),
+                    "registration_endpoint": format!("{base}/register"),
+                    "response_types_supported": ["code"],
+                    "code_challenge_methods_supported": ["S256"],
+                    "client_id_metadata_document_supported": true,
+                })
+                .to_string(),
+            )
+        })
+    }))
+    .await;
+
+    let provider = with_url(metadata_url);
+    let result = rust_mcp_remote::auth::auth(&provider, &options(&base)).await;
+    assert_eq!(result, Ok(AuthResult::Redirect));
+    {
+        let store = provider.store();
+        assert_eq!(
+            store.client_information,
+            Some(json!({"client_id": metadata_url, "issuer": base}))
+        );
+        let pairs: Vec<(String, String)> = store
+            .redirected_to
+            .as_ref()
+            .unwrap()
+            .query_pairs()
+            .into_owned()
+            .collect();
+        assert_eq!(param(&pairs, "client_id"), Some(metadata_url));
+    }
+    let paths: Vec<String> = drain(&mut requests).into_iter().map(|r| r.path).collect();
+    assert!(!paths.contains(&"/register".to_owned()), "{paths:?}");
+
+    // A URL that is not HTTPS with a path is refused before anything is saved.
+    for bad in [
+        "http://client.example/metadata.json",
+        "https://client.example/",
+    ] {
+        let provider = with_url(bad);
+        let error = rust_mcp_remote::auth::auth(&provider, &options(&base))
+            .await
+            .unwrap_err();
+        assert_eq!(error.oauth_code(), Some("invalid_client_metadata"));
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "clientMetadataUrl must be a valid HTTPS URL with a non-root pathname, got: {bad}"
+            )
+        );
+        assert_eq!(provider.store().client_information, None);
+    }
+}
+
+#[tokio::test]
+async fn a_client_metadata_url_is_ignored_when_the_server_does_not_support_it() {
+    let (base, mut requests) = auth_server(Arc::new(|_, _| None)).await;
+    let provider = TestProvider {
+        client_metadata_url: Some("https://client.example/oauth/metadata.json".to_owned()),
+        ..TestProvider::new()
+    };
+    let result = rust_mcp_remote::auth::auth(&provider, &options(&base)).await;
+    assert_eq!(result, Ok(AuthResult::Redirect));
+    assert_eq!(
+        provider.store().client_information.as_ref().unwrap()["client_id"],
+        "registered-client"
+    );
+    let paths: Vec<String> = drain(&mut requests).into_iter().map(|r| r.path).collect();
+    assert!(paths.contains(&"/register".to_owned()), "{paths:?}");
 }
 
 #[tokio::test]
