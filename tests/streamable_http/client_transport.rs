@@ -251,6 +251,43 @@ async fn an_sse_response_delivers_its_messages_and_does_not_reconnect() {
 }
 
 #[tokio::test]
+async fn a_primed_post_stream_that_drops_resumes_with_a_get_until_the_response_arrives() {
+    let gets = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&gets);
+    let (base, mut requests) = serve(handler(move |request| {
+        if request.method == "POST" {
+            return reply(200, &[SSE], "retry: 10\nid: p1\ndata:\n\n");
+        }
+        counter.fetch_add(1, Ordering::SeqCst);
+        reply(
+            200,
+            &[SSE],
+            "event: ping\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"ignored\"}\n\n\
+             id: p2\ndata: {\"jsonrpc\":\"2.0\",\"id\":5,\"result\":{}}\n\n",
+        )
+    }))
+    .await;
+    let (transport, mut events) = transport(&base, StreamableHttpOptions::default());
+
+    transport
+        .send(&json!({"jsonrpc":"2.0","id":5,"method":"tools/list"}))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        next_event(&mut events).await,
+        TransportEvent::Message(json!({"jsonrpc":"2.0","id":5,"result":{}}))
+    );
+    assert_eq!(next_request(&mut requests).await.method, "POST");
+    let resumed = next_request(&mut requests).await;
+    assert_eq!(resumed.method, "GET");
+    assert_eq!(resumed.header("last-event-id"), Some("p1"));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(gets.load(Ordering::SeqCst), 1);
+    assert!(events.try_recv().is_err());
+}
+
+#[tokio::test]
 async fn initialized_opens_the_standalone_stream_and_a_405_is_quiet() {
     let (base, mut requests) = serve(handler(|request| {
         if request.method == "GET" {
