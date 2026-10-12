@@ -818,6 +818,30 @@ pub enum CredentialScope {
 
 pub type InFlight<T> = Mutex<Option<Arc<OnceLock<T>>>>;
 
+/// Runs `attempt` once for every caller that arrives while it is running; the others
+/// wait for its result, as the TypeScript provider's in-flight promises do.
+fn join_in_flight<T: Clone>(slot: &InFlight<T>, attempt: impl FnOnce() -> T) -> T {
+    let (cell, is_leader) = {
+        let mut in_flight = lock(slot);
+        if let Some(cell) = in_flight.as_ref() {
+            (Arc::clone(cell), false)
+        } else {
+            let cell = Arc::new(OnceLock::new());
+            *in_flight = Some(Arc::clone(&cell));
+            (cell, true)
+        }
+    };
+
+    if !is_leader {
+        return cell.wait().clone();
+    }
+
+    let result = attempt();
+    let _ = cell.set(result.clone());
+    *lock(slot) = None;
+    result
+}
+
 pub struct NodeOAuthClientProvider {
     pub options: OAuthProviderOptions,
     pub server_url_hash: String,
@@ -847,7 +871,7 @@ pub struct NodeOAuthClientProvider {
     pub pending_flow: Option<PendingFlow>,
     pub client_registration_source: Option<ClientRegistrationSource>,
     pub warned_about_missing_id_token: bool,
-    pub refresh_in_flight: Mutex<Option<Arc<OnceLock<Option<Value>>>>>,
+    pub refresh_in_flight: InFlight<Option<Value>>,
     pub client_credentials_in_flight: InFlight<Result<(), String>>,
 }
 
@@ -1275,26 +1299,9 @@ impl NodeOAuthClientProvider {
         refresh_token: &str,
         do_refresh_tokens: impl FnOnce(&str) -> Option<Value>,
     ) -> Option<Value> {
-        let (attempt, is_leader) = {
-            let mut in_flight = lock(&self.refresh_in_flight);
-            match in_flight.as_ref() {
-                Some(attempt) => (attempt.clone(), false),
-                None => {
-                    let attempt = Arc::new(OnceLock::new());
-                    *in_flight = Some(attempt.clone());
-                    (attempt, true)
-                }
-            }
-        };
-
-        if !is_leader {
-            return attempt.wait().clone();
-        }
-
-        let result = self.refresh_once_per_host(refresh_token, do_refresh_tokens);
-        let _ = attempt.set(result.clone());
-        *lock(&self.refresh_in_flight) = None;
-        result
+        join_in_flight(&self.refresh_in_flight, || {
+            self.refresh_once_per_host(refresh_token, do_refresh_tokens)
+        })
     }
 
     pub fn renew_client_credentials(
@@ -1302,26 +1309,9 @@ impl NodeOAuthClientProvider {
         scope: Option<&str>,
         auth: impl FnOnce(&str, Option<&str>) -> Result<(), String>,
     ) -> Result<(), String> {
-        let (attempt, is_leader) = {
-            let mut in_flight = lock(&self.client_credentials_in_flight);
-            match in_flight.as_ref() {
-                Some(attempt) => (attempt.clone(), false),
-                None => {
-                    let attempt = Arc::new(OnceLock::new());
-                    *in_flight = Some(attempt.clone());
-                    (attempt, true)
-                }
-            }
-        };
-
-        if !is_leader {
-            return attempt.wait().clone();
-        }
-
-        let result = auth(self.resource_server_url(), scope);
-        let _ = attempt.set(result.clone());
-        *lock(&self.client_credentials_in_flight) = None;
-        result
+        join_in_flight(&self.client_credentials_in_flight, || {
+            auth(self.resource_server_url(), scope)
+        })
     }
 
     pub fn refresh_once_per_host(
