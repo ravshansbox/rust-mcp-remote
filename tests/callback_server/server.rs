@@ -246,6 +246,19 @@ async fn long_poll_answers_202_on_timeout_and_200_when_the_code_arrives() {
 }
 
 #[tokio::test]
+async fn a_zero_timeout_falls_back_to_the_default_long_poll() {
+    let server = start("/oauth/callback", &AuthEvents::new(), Some(0)).await;
+    let port = server.actual_port;
+    let poll = tokio::spawn(get(format!("http://127.0.0.1:{port}/wait-for-auth")));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    get(format!("http://127.0.0.1:{port}/oauth/callback?code=x")).await;
+    assert_eq!(
+        poll.await.unwrap(),
+        (200, "Authentication completed".to_owned())
+    );
+}
+
+#[tokio::test]
 async fn a_callback_without_a_code_is_a_bad_request() {
     let server = start("/oauth/callback", &AuthEvents::new(), None).await;
     let (status, body) = get(format!(
