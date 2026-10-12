@@ -121,3 +121,39 @@ fn keeps_a_bom_that_is_not_at_the_start_of_the_stream() {
         vec![event(None, None, "a\u{feff}")]
     );
 }
+
+#[test]
+fn an_empty_data_line_still_dispatches_an_event() {
+    let mut parser = EventSourceParser::new();
+    assert_eq!(parser.feed(b"data:\n\n"), vec![event(None, None, "")]);
+    assert_eq!(
+        parser.feed(b"data\ndata\n\n"),
+        vec![event(None, None, "\n")]
+    );
+}
+
+#[test]
+fn a_retry_too_large_for_u64_saturates() {
+    let mut parser = EventSourceParser::new();
+    assert_eq!(
+        parser.feed(b"retry: 99999999999999999999999\n"),
+        vec![SseItem::Retry(u64::MAX)]
+    );
+}
+
+#[test]
+fn an_empty_first_chunk_does_not_stop_the_bom_being_dropped() {
+    let mut parser = EventSourceParser::new();
+    assert!(parser.feed(b"").is_empty());
+    assert_eq!(
+        parser.feed(b"\xEF\xBB\xBFdata: x\n\n"),
+        vec![event(None, None, "x")]
+    );
+}
+
+#[test]
+fn an_unfinished_event_is_kept_until_its_blank_line() {
+    let mut parser = EventSourceParser::new();
+    assert!(parser.feed(b"id: 3\ndata: a\n").is_empty());
+    assert_eq!(parser.feed(b"\n"), vec![event(Some("3"), None, "a")]);
+}
