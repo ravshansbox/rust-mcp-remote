@@ -10,6 +10,7 @@ use rust_mcp_remote::auth::{
     select_resource_url,
 };
 use rust_mcp_remote::node_oauth_client_provider::{CredentialScope, code_challenge_for};
+use rust_mcp_remote::streamable_http::{FetchFn, default_fetch};
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
 use url::Url;
@@ -706,6 +707,29 @@ async fn without_resource_metadata_the_server_origin_is_the_authorization_server
             "/.well-known/oauth-authorization-server",
         ]
     );
+}
+
+#[tokio::test]
+async fn a_network_error_on_resource_metadata_ends_discovery_without_falling_back() {
+    let (base, mut requests) = auth_server(Arc::new(|_, _| None)).await;
+    let inner = default_fetch();
+    let fetch: FetchFn = Arc::new(move |request| {
+        if request
+            .url()
+            .path()
+            .starts_with("/.well-known/oauth-protected-resource")
+        {
+            Box::pin(async { Err("connection reset".to_owned()) })
+        } else {
+            inner(request)
+        }
+    });
+    let server_url = Url::parse(&format!("{base}/mcp")).unwrap();
+    let error = discover_oauth_server_info(&server_url, None, Some(&fetch), false)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AuthError::Network(_)), "{error:?}");
+    assert!(drain(&mut requests).is_empty());
 }
 
 #[tokio::test]
