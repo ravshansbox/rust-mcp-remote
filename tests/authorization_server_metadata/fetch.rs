@@ -137,9 +137,45 @@ async fn stops_at_the_first_candidate_that_answers() {
     }))
     .await;
 
-    fetch_authorization_server_metadata(&format!("{base}/mcp")).await;
-    assert!(requests.try_recv().is_ok());
+    assert_eq!(
+        fetch_authorization_server_metadata(&format!("{base}/mcp")).await,
+        Some(json!({"issuer": "https://example.com/mcp"}))
+    );
+    assert_eq!(
+        requests.try_recv().unwrap().path,
+        "/.well-known/oauth-authorization-server/mcp"
+    );
     assert!(requests.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn follows_a_redirect_to_the_metadata_document() {
+    let (base, mut requests) = serve(Arc::new(|request: &RecordedRequest| {
+        if request.path == "/.well-known/oauth-authorization-server" {
+            reply(302, &[("location", "/moved/metadata.json")], "")
+        } else if request.path == "/moved/metadata.json" {
+            json_reply(json!({"issuer": "moved"}))
+        } else {
+            reply(404, &[], "Not Found")
+        }
+    }))
+    .await;
+
+    assert_eq!(
+        fetch_authorization_server_metadata(&base).await,
+        Some(json!({"issuer": "moved"}))
+    );
+    let mut paths = Vec::new();
+    while let Ok(request) = requests.try_recv() {
+        paths.push(request.path);
+    }
+    assert_eq!(
+        paths,
+        [
+            "/.well-known/oauth-authorization-server",
+            "/moved/metadata.json"
+        ]
+    );
 }
 
 #[tokio::test]
