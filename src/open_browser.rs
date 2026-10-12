@@ -17,7 +17,7 @@ pub struct BrowserFallback {
 pub fn linux_browser_fallbacks(url: &str) -> Vec<BrowserFallback> {
     let fallback = |command: &str, args: &[&str]| BrowserFallback {
         command: command.to_string(),
-        args: args.iter().map(|argument| argument.to_string()).collect(),
+        args: args.iter().map(ToString::to_string).collect(),
     };
     vec![
         fallback("/usr/bin/xdg-open", &[url]),
@@ -98,7 +98,7 @@ pub fn bundled_opener(url: &str, os: &str) -> BrowserFallback {
     };
     BrowserFallback {
         command: command.to_string(),
-        args: args.iter().map(|argument| argument.to_string()).collect(),
+        args: args.iter().map(ToString::to_string).collect(),
     }
 }
 
@@ -124,7 +124,7 @@ fn powershell_start(url: &str) -> BrowserFallback {
             "-EncodedCommand",
         ]
         .iter()
-        .map(|argument| argument.to_string())
+        .map(ToString::to_string)
         .chain([base64::engine::general_purpose::STANDARD.encode(command)])
         .collect(),
     }

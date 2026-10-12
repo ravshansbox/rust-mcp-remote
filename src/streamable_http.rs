@@ -408,7 +408,7 @@ fn merge_accept(headers: &mut HeaderMap, extra: &[&str]) {
                 .collect()
         })
         .unwrap_or_default();
-    types.extend(extra.iter().map(|value| value.to_string()));
+    types.extend(extra.iter().map(ToString::to_string));
     let mut unique: Vec<String> = Vec::new();
     for value in types {
         if !unique.contains(&value) {

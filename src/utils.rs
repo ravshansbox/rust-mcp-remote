@@ -97,7 +97,7 @@ pub fn set_cookies_enabled(enabled: bool) {
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// `cookieHeaderFor`: the Cookie header the jar holds for `url`, if any.
@@ -1072,10 +1072,7 @@ pub fn parse_auth_timeout_to(console: &mut impl std::io::Write, args: &[String])
         Some(rest) => (true, rest),
         None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
     };
-    let digits: String = unsigned
-        .chars()
-        .take_while(|character| character.is_ascii_digit())
-        .collect();
+    let digits: String = unsigned.chars().take_while(char::is_ascii_digit).collect();
     match digits.parse::<u64>() {
         Ok(timeout_seconds) if !negative && timeout_seconds > 0 => {
             log_to(

@@ -120,7 +120,7 @@ impl CoordinatedAuth {
         let pending = self
             .server
             .as_ref()
-            .map(|server| server.wait_for_auth_code());
+            .map(OAuthCallbackServer::wait_for_auth_code);
         async move {
             match pending {
                 Some(pending) => pending.await,

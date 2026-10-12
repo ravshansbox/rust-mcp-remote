@@ -113,7 +113,7 @@ pub fn set_silent(enabled: bool) {
 pub fn set_current_server_url_hash(server_url_hash: Option<String>) {
     *CURRENT_SERVER_URL_HASH
         .write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = server_url_hash;
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = server_url_hash;
 }
 
 pub fn debug_log_to(console: &mut impl Write, message: &str, args: &[Value]) {
@@ -122,7 +122,7 @@ pub fn debug_log_to(console: &mut impl Write, message: &str, args: &[Value]) {
     }
     let server_url_hash = CURRENT_SERVER_URL_HASH
         .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
     let formatted_message = format_debug_message(
         &iso_timestamp(std::time::SystemTime::now()),
