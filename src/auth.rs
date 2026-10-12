@@ -89,7 +89,10 @@ fn js_string(value: Option<&str>) -> String {
 impl std::fmt::Display for AuthError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AuthError::OAuth { message, .. } => formatter.write_str(message),
+            AuthError::OAuth { message, .. }
+            | AuthError::Unauthorized(message)
+            | AuthError::Network(message)
+            | AuthError::Other(message) => formatter.write_str(message),
             AuthError::IssuerMismatch {
                 kind,
                 expected,
@@ -119,9 +122,6 @@ impl std::fmt::Display for AuthError {
                 js_string(Some(recorded)),
                 js_string(Some(current))
             ),
-            AuthError::Unauthorized(message)
-            | AuthError::Network(message)
-            | AuthError::Other(message) => formatter.write_str(message),
         }
     }
 }
@@ -338,9 +338,8 @@ pub fn validate_authorization_response_issuer(
     };
     match iss {
         None if iss_parameter_supported => Err(mismatch(None)),
-        None => Ok(()),
         Some(iss) if iss != expected => Err(mismatch(Some(iss))),
-        Some(_) => Ok(()),
+        _ => Ok(()),
     }
 }
 
