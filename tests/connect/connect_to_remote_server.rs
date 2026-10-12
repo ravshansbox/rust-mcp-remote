@@ -614,6 +614,24 @@ async fn in_auto_mode_a_probe_the_server_fails_with_a_5xx_is_an_error() {
 }
 
 #[tokio::test]
+async fn in_auto_mode_a_probe_http_error_naming_only_unknown_modern_versions_is_an_error() {
+    let (outcome, methods) = connect_in_auto_mode(|| {
+        reply(
+            400,
+            &[("content-type", "application/json")],
+            r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32022,"message":"Unsupported protocol version","data":{"supported":["2099-01-01"]}}}"#,
+        )
+    })
+    .await;
+
+    assert_eq!(
+        outcome,
+        Err("MCP error -32022: Unsupported protocol version".to_owned())
+    );
+    assert_eq!(methods.len(), 1);
+}
+
+#[tokio::test]
 async fn in_auto_mode_a_probe_the_server_denies_with_a_403_is_an_error() {
     let (outcome, methods) = connect_in_auto_mode(|| reply(403, &[], "denied")).await;
 
