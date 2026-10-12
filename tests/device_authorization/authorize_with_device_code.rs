@@ -148,7 +148,7 @@ fn rejects_metadata_without_a_device_authorization_endpoint() {
         result,
         Err("The authorization server does not offer a device authorization endpoint".to_string())
     );
-    assert!(sent.is_empty());
+    assert_eq!(sent, []);
 }
 
 #[test]
@@ -161,7 +161,7 @@ fn rejects_metadata_without_a_token_endpoint() {
         result,
         Err("The authorization server metadata has no token endpoint".to_string())
     );
-    assert!(sent.is_empty());
+    assert_eq!(sent, []);
 }
 
 #[test]

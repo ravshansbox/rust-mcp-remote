@@ -37,7 +37,7 @@ fn client_secret_basic_without_a_secret_is_an_error() {
         result,
         Err("client_secret_basic authentication requires a client_secret".to_string())
     );
-    assert!(headers.is_empty());
+    assert_eq!(headers, []);
 }
 
 #[test]
@@ -54,7 +54,7 @@ fn client_secret_post_puts_the_credentials_in_the_body() {
     )
     .unwrap();
 
-    assert!(headers.is_empty());
+    assert_eq!(headers, []);
     assert_eq!(
         params,
         pairs(&[
@@ -107,5 +107,5 @@ fn an_unknown_method_is_an_error() {
         result,
         Err("Unsupported client authentication method: private_key_jwt".to_string())
     );
-    assert!(params.is_empty());
+    assert_eq!(params, []);
 }

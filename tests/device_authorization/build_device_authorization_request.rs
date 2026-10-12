@@ -60,7 +60,7 @@ fn client_secret_basic_adds_an_authorization_header_and_no_params() {
             ("Authorization", "Basic YzE6czE="),
         ])
     );
-    assert!(request.params.is_empty());
+    assert_eq!(request.params, []);
 }
 
 #[test]
