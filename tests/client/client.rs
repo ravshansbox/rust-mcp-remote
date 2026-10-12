@@ -168,7 +168,12 @@ async fn a_response_with_an_unknown_id_is_reported_and_ignored() {
         r#"Received a response for an unknown message ID: {"jsonrpc":"2.0","id":999,"result":{}}"#
     );
     assert!(!client.is_closed());
-    assert!(client.request("tools/list", None).await.is_ok());
+    assert_eq!(
+        client.request("tools/list", None).await.unwrap(),
+        json!({"tools": [
+            {"name": "search", "description": "Search", "inputSchema": {"type": "object"}},
+        ]})
+    );
 }
 
 #[tokio::test]
@@ -258,7 +263,12 @@ async fn a_transport_error_reaches_the_error_hook_without_closing_the_client() {
 
     assert_eq!(errors.recv().await.unwrap(), "stream reset");
     assert!(!client.is_closed());
-    assert!(client.request("tools/list", None).await.is_ok());
+    assert_eq!(
+        client.request("tools/list", None).await.unwrap(),
+        json!({"tools": [
+            {"name": "search", "description": "Search", "inputSchema": {"type": "object"}},
+        ]})
+    );
 }
 
 #[tokio::test]

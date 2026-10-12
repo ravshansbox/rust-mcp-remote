@@ -479,7 +479,10 @@ async fn invalid_grant_discards_the_tokens_and_starts_over() {
     let store = provider.store();
     assert_eq!(store.invalidated, [CredentialScope::Tokens]);
     assert!(store.tokens.is_none());
-    assert!(store.redirected_to.is_some());
+    let authorize = store.redirected_to.clone().unwrap();
+    assert_eq!(authorize.path(), "/authorize");
+    let pairs: Vec<(String, String)> = authorize.query_pairs().into_owned().collect();
+    assert_eq!(param(&pairs, "client_id"), Some("cid"));
 }
 
 #[tokio::test]
