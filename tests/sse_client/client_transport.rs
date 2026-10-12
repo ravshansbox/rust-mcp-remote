@@ -283,6 +283,77 @@ async fn reports_a_failed_post_with_its_status_and_body() {
 }
 
 #[tokio::test]
+async fn a_post_redirected_to_another_origin_is_not_followed() {
+    let streams = Streams::default();
+    let handler_streams = streams.clone();
+    let (base, mut requests) = serve(Arc::new(move |request: &Recorded| {
+        if request.method == "GET" {
+            handler_streams.open(ENDPOINT_EVENT)
+        } else {
+            fixed(
+                307,
+                &[("location", "http://other.example/messages?sessionId=abc")],
+                "",
+            )
+        }
+    }))
+    .await;
+    let (transport, _events) = transport(&base, SseClientOptions::default());
+    transport.start().await.unwrap();
+
+    let error = transport
+        .send(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Error POSTing to endpoint (HTTP 307): Redirect to http://other.example/messages not followed; \
+         use that URL as the endpoint if it is the intended server (redirectPolicy: 'same-origin')"
+    );
+    let mut posts = 0;
+    while let Ok(request) = requests.try_recv() {
+        posts += usize::from(request.method == "POST");
+    }
+    assert_eq!(posts, 1);
+    transport.close();
+}
+
+#[tokio::test]
+async fn a_401_post_whose_sign_in_needs_a_browser_is_unauthorized() {
+    let streams = Streams::default();
+    let handler_streams = streams.clone();
+    let (base, _requests) = serve(Arc::new(move |request: &Recorded| {
+        if request.method == "GET" {
+            handler_streams.open(ENDPOINT_EVENT)
+        } else {
+            fixed(401, &[], "")
+        }
+    }))
+    .await;
+    let oauth = FakeOauth::new(Some("stale"), AuthResult::Redirect);
+    let (transport, mut events) = transport(
+        &base,
+        SseClientOptions {
+            oauth: Some(Arc::new(Oauth(Arc::clone(&oauth)))),
+            ..SseClientOptions::default()
+        },
+    );
+    transport.start().await.unwrap();
+
+    let error = transport
+        .send(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "Unauthorized");
+    assert_eq!(oauth.calls.lock().unwrap().len(), 1);
+    match next_event(&mut events).await {
+        TransportEvent::Error(message) => assert_eq!(message, "Unauthorized"),
+        other => panic!("expected an error event, got {other:?}"),
+    }
+    transport.close();
+}
+
+#[tokio::test]
 async fn send_before_start_is_not_connected() {
     let (transport, _events) = transport("http://127.0.0.1:9", SseClientOptions::default());
     let error = transport
