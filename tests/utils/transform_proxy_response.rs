@@ -55,6 +55,18 @@ fn tool_without_a_name_is_tested_as_undefined() {
 }
 
 #[test]
+fn tool_with_a_non_string_name_is_tested_by_its_json_text() {
+    let request = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"});
+    let response = json!({"jsonrpc": "2.0", "id": 1, "result": {"tools": [
+        {"name": 5}, {"name": null}, {"name": true}, {"name": "a"}
+    ]}});
+    assert_eq!(
+        transform_proxy_response(&ignored(&["5", "null", "true"]), false, &request, response),
+        json!({"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "a"}]}})
+    );
+}
+
+#[test]
 fn modern_era_strips_complete_result_type_and_filters() {
     let request = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"});
     let response = json!({"jsonrpc": "2.0", "id": 1, "result": {

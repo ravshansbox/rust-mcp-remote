@@ -55,3 +55,12 @@ fn error_keeps_string_id() {
         json!("abc")
     );
 }
+
+#[test]
+fn call_without_an_id_is_not_blocked() {
+    let request =
+        json!({"jsonrpc": "2.0", "id": null, "method": "tools/call", "params": {"name": "x"}});
+    assert_eq!(ignored_tool_call_error(&ignored(&["x"]), &request), None);
+    let request = json!({"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "x"}});
+    assert_eq!(ignored_tool_call_error(&ignored(&["x"]), &request), None);
+}
