@@ -34,3 +34,6 @@ mod callback_port_candidates;
 mod coordinate_auth;
 mod has_usable_tokens;
 mod lazy_auth_coordinator;
+#[allow(dead_code)]
+#[path = "../streamable_http/test_server.rs"]
+mod test_server;

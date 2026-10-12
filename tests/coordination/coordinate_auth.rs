@@ -15,6 +15,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 use crate::run_in_config_dir;
+use crate::test_server::{RecordedRequest, reply, serve};
 
 const HASH: &str = "coordinate-test";
 
@@ -269,4 +270,40 @@ async fn a_server_that_serves_us_needs_no_coordination() {
 #[tokio::test]
 async fn a_server_we_cannot_reach_is_left_to_the_401_handler() {
     assert!(!server_issues_auth_challenge("http://127.0.0.1:9/mcp", &[]).await);
+}
+
+#[tokio::test]
+async fn the_probe_sends_the_command_line_headers() {
+    let (base, mut requests) = serve(std::sync::Arc::new(|request: &RecordedRequest| {
+        if request.header("authorization") == Some("Bearer pinned") {
+            reply(200, &[], "")
+        } else {
+            reply(401, &[], "")
+        }
+    }))
+    .await;
+    let headers = [("Authorization".to_owned(), "Bearer pinned".to_owned())];
+
+    assert!(!server_issues_auth_challenge(&format!("{base}/mcp"), &headers).await);
+
+    let probe = requests.try_recv().unwrap();
+    assert_eq!(probe.method, "GET");
+    assert_eq!(
+        probe.header("accept"),
+        Some("application/json, text/event-stream")
+    );
+}
+
+#[tokio::test]
+async fn the_probe_follows_a_redirect_to_the_challenge() {
+    let (base, _requests) = serve(std::sync::Arc::new(
+        |request: &RecordedRequest| match request.path.as_str() {
+            "/mcp" => reply(307, &[("location", "/moved/mcp")], ""),
+            "/moved/mcp" => reply(401, &[("www-authenticate", "Bearer")], ""),
+            _ => reply(404, &[], ""),
+        },
+    ))
+    .await;
+
+    assert!(server_issues_auth_challenge(&format!("{base}/mcp"), &[]).await);
 }
