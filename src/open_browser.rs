@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -171,7 +172,7 @@ pub fn encode_uri_component(value: &str) -> String {
         if byte.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&byte) {
             encoded.push(byte as char);
         } else {
-            encoded.push_str(&format!("%{byte:02X}"));
+            let _ = write!(encoded, "%{byte:02X}");
         }
     }
     encoded
