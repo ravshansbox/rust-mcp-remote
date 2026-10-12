@@ -194,3 +194,16 @@ fn an_event_name_without_data_does_not_carry_over_to_the_next_event() {
     assert!(parser.feed(b"event: endpoint\n\n").is_empty());
     assert_eq!(parser.feed(b"data: a\n\n"), vec![event(None, None, "a")]);
 }
+
+#[test]
+fn field_names_are_case_sensitive() {
+    let mut parser = EventSourceParser::new();
+    assert_eq!(
+        parser.feed(b"Data: x\nEVENT: y\ndata: z\n\n"),
+        vec![
+            SseItem::Error("Unknown field \"Data\"".to_owned()),
+            SseItem::Error("Unknown field \"EVENT\"".to_owned()),
+            event(None, None, "z"),
+        ]
+    );
+}
