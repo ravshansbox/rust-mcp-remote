@@ -262,3 +262,55 @@ fn a_negative_max_age_deletes_the_cookie() {
 
     assert_eq!(jar.header("https://mcp.example.com/mcp"), None);
 }
+
+#[test]
+fn a_path_ending_in_a_slash_covers_only_what_is_below_it() {
+    let mut jar = CookieJar::new();
+    jar.capture("https://mcp.example.com/", &["stick=1; Path=/mcp/"]);
+
+    assert_eq!(
+        jar.header("https://mcp.example.com/mcp/messages")
+            .as_deref(),
+        Some("stick=1")
+    );
+    assert_eq!(jar.header("https://mcp.example.com/mcp"), None);
+}
+
+#[test]
+fn a_max_age_too_large_to_represent_never_expires() {
+    let now = Arc::new(Mutex::new(SystemTime::now()));
+    let clock = Arc::clone(&now);
+    let mut jar = CookieJar::with_clock(move || *clock.lock().unwrap());
+    jar.capture(
+        "https://mcp.example.com/mcp",
+        &["stick=1; Path=/; Max-Age=1e300"],
+    );
+
+    *now.lock().unwrap() += Duration::from_secs(100 * 365 * 24 * 60 * 60);
+    assert_eq!(
+        jar.header("https://mcp.example.com/mcp").as_deref(),
+        Some("stick=1")
+    );
+}
+
+#[test]
+fn a_malformed_set_cookie_does_not_stop_the_rest_being_stored() {
+    let mut jar = CookieJar::new();
+    jar.capture(
+        "https://mcp.example.com/mcp",
+        &["broken", " AWSALB = node-1 ; Path=/"],
+    );
+
+    assert_eq!(
+        jar.header("https://mcp.example.com/mcp").as_deref(),
+        Some("AWSALB=node-1")
+    );
+}
+
+#[test]
+fn an_unparseable_url_is_ignored() {
+    let mut jar = CookieJar::new();
+    jar.capture("not a url", &["stick=1; Path=/"]);
+
+    assert_eq!(jar.header("not a url"), None);
+}
