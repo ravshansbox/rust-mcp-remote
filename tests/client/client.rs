@@ -185,3 +185,33 @@ async fn a_transport_error_reaches_the_error_hook_without_closing_the_client() {
     assert!(!client.is_closed());
     assert!(client.request("tools/list", None).await.is_ok());
 }
+
+#[tokio::test]
+async fn closing_the_client_fails_requests_in_flight_and_calls_the_close_hook_once() {
+    let mut pair = connected_pair(tools_server()).await;
+    let client = pair.client.unwrap();
+    pair.sent.recv().await.unwrap();
+    pair.sent.recv().await.unwrap();
+    let (hook_tx, mut hook_calls) = tokio::sync::mpsc::unbounded_channel();
+    client.set_on_close(move || {
+        let _ = hook_tx.send(());
+    });
+
+    let request = tokio::spawn({
+        let client = client.clone();
+        async move { client.request("resources/list", None).await }
+    });
+    pair.sent.recv().await.unwrap();
+    client.close();
+    client.close();
+
+    assert_eq!(request.await.unwrap().unwrap_err().code, CONNECTION_CLOSED);
+    hook_calls.recv().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    assert!(hook_calls.try_recv().is_err());
+    assert_eq!(
+        pair.closes.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "each close() closes the transport"
+    );
+}
