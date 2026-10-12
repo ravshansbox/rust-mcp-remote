@@ -11,7 +11,10 @@ use crate::with_temporary_config_dir;
 const USAGE: &str = "Usage: mcp-remote <https://server-url> [callback-port]";
 
 fn arguments(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
+    values
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect()
 }
 
 fn console_lines(console: Vec<u8>) -> Vec<String> {

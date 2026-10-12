@@ -11,7 +11,7 @@ pub static GLOBAL_STATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 pub fn with_temporary_config_dir<T>(action: impl FnOnce(&Path) -> T) -> T {
     let _guard = GLOBAL_STATE
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("time after epoch")

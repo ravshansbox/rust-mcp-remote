@@ -127,7 +127,7 @@ fn runs_the_device_flow_with_the_scope_and_resource_and_saves_the_tokens() {
                     metadata.clone(),
                     client_information.clone(),
                     scope.map(str::to_string),
-                    resource.map(|resource| resource.to_string()),
+                    resource.map(std::string::ToString::to_string),
                 ));
                 Ok(json!({ "access_token": "device-token", "token_type": "Bearer" }))
             },

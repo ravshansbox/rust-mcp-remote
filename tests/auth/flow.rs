@@ -1572,13 +1572,13 @@ async fn discover_authorization_server_metadata_walks_the_well_known_urls() {
     );
 
     // Every candidate missing is no metadata, not an error.
-    let (base, _requests) = tenant_discovery(|_| 404, |base| base.to_owned()).await;
+    let (base, _requests) = tenant_discovery(|_| 404, std::borrow::ToOwned::to_owned).await;
     let result =
         discover_authorization_server_metadata(&format!("{base}/tenant"), None, None, false).await;
     assert_eq!(result, Ok(None));
 
     // Any other 5xx stops the walk.
-    let (base, mut requests) = tenant_discovery(|_| 500, |base| base.to_owned()).await;
+    let (base, mut requests) = tenant_discovery(|_| 500, std::borrow::ToOwned::to_owned).await;
     let error =
         discover_authorization_server_metadata(&format!("{base}/tenant"), None, None, false)
             .await

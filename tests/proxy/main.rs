@@ -500,7 +500,7 @@ async fn several_refused_requests_share_one_sign_in() {
         next(&mut harness.server.sent).await["id"].clone(),
         next(&mut harness.server.sent).await["id"].clone(),
     ];
-    ids.sort_by_key(|id| id.as_i64());
+    ids.sort_by_key(serde_json::Value::as_i64);
     assert_eq!(ids, vec![json!(1), json!(2)]);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }

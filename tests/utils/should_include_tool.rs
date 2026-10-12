@@ -1,7 +1,10 @@
 use rust_mcp_remote::utils::should_include_tool;
 
 fn patterns(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
+    values
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect()
 }
 
 #[test]

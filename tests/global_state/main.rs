@@ -15,7 +15,7 @@ pub fn console_text(console: Vec<u8>) -> String {
 pub fn with_temporary_config_dir<T>(action: impl FnOnce() -> T) -> T {
     let _guard = GLOBAL_STATE
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("time after epoch")

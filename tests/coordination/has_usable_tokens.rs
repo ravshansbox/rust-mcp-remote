@@ -16,7 +16,7 @@ const NOW: u64 = 1_700_000_000_000;
 fn with_temporary_config_dir<T>(action: impl FnOnce() -> T) -> T {
     let _guard = ENVIRONMENT
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("time after epoch")

@@ -50,7 +50,10 @@ mod validate_server_url;
 
 /// Turns string literals into the owned argument list the parsers take.
 pub fn arguments(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
+    values
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect()
 }
 
 /// Turns `(name, value)` literals into the owned header pairs the header helpers take.

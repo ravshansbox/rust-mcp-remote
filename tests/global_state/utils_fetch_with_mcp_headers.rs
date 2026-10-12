@@ -13,7 +13,7 @@ fn with_cookies_enabled<T>(
 ) -> T {
     let _guard = GLOBAL_STATE
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     set_cookies_enabled(cookies_enabled);
     let result = tokio::runtime::Runtime::new()
         .expect("runtime")

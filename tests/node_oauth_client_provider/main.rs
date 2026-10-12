@@ -6,7 +6,7 @@ pub static GLOBAL_STATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Runs `action` with `MCP_REMOTE_CONFIG_DIR` pointing at a fresh temporary directory,
 /// holding `GLOBAL_STATE` throughout and removing the directory afterwards.
 pub fn with_temporary_config_dir<T>(action: impl FnOnce() -> T) -> T {
-    with_config_dir(|directory| directory.clone(), action)
+    with_config_dir(std::clone::Clone::clone, action)
 }
 
 /// Creates a fresh temporary directory and runs `action` with `MCP_REMOTE_CONFIG_DIR`
@@ -18,7 +18,7 @@ pub fn with_config_dir<T>(
 ) -> T {
     let _guard = GLOBAL_STATE
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("time after epoch")

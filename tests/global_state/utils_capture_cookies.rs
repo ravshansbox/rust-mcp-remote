@@ -19,7 +19,7 @@ async fn response_setting(set_cookie: &'static str) -> (String, reqwest::Respons
 fn the_flag_gates_both_capturing_and_reading_the_jar() {
     let _guard = GLOBAL_STATE
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let runtime = tokio::runtime::Runtime::new().expect("runtime");
 
     set_cookies_enabled(false);

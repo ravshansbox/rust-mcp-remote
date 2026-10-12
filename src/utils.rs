@@ -764,7 +764,8 @@ pub fn ignored_tool_call_error(
     ignored_tools: &[String],
     request: &serde_json::Value,
 ) -> Option<serde_json::Value> {
-    if request["method"] != "tools/call" || request.get("id").is_none_or(|id| id.is_null()) {
+    if request["method"] != "tools/call" || request.get("id").is_none_or(serde_json::Value::is_null)
+    {
         return None;
     }
     let tool_name = request["params"]["name"]

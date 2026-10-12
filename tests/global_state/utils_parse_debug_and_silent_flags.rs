@@ -6,7 +6,7 @@ use crate::{GLOBAL_STATE, console_text};
 fn with_reset_flags<T>(action: impl FnOnce() -> T) -> T {
     let _guard = GLOBAL_STATE
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let result = action();
     set_debug(false);
     set_silent(false);
@@ -15,7 +15,10 @@ fn with_reset_flags<T>(action: impl FnOnce() -> T) -> T {
 }
 
 fn arguments(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
+    values
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect()
 }
 
 const MISSING_HASH: &str =

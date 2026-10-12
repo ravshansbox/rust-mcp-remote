@@ -15,7 +15,7 @@ static CONFIG_DIR: std::sync::Mutex<()> = std::sync::Mutex::new(());
 fn in_config_dir<T>(test: impl AsyncFnOnce() -> T) -> T {
     let _guard = CONFIG_DIR
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("time after epoch")
@@ -37,7 +37,10 @@ fn in_config_dir<T>(test: impl AsyncFnOnce() -> T) -> T {
 }
 
 fn command_line(values: &[&str]) -> CommandLineArgs {
-    let values = values.iter().map(|value| value.to_string()).collect();
+    let values = values
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
     parse_command_line_args_to(&mut Vec::new(), values, "usage")
         .unwrap()
         .unwrap()

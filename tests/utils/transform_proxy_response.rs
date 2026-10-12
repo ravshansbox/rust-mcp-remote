@@ -2,7 +2,10 @@ use rust_mcp_remote::utils::transform_proxy_response;
 use serde_json::json;
 
 fn ignored(patterns: &[&str]) -> Vec<String> {
-    patterns.iter().map(|pattern| pattern.to_string()).collect()
+    patterns
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect()
 }
 
 #[test]

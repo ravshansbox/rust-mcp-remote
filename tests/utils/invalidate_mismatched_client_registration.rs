@@ -15,7 +15,7 @@ const REDIRECT_URL: &str = "http://localhost:5599/oauth/callback";
 fn with_temporary_config_dir<T>(action: impl FnOnce() -> T) -> T {
     let _guard = ENVIRONMENT
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("time after epoch")

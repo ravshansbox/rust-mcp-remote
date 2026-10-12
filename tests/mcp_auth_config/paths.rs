@@ -7,7 +7,7 @@ use crate::GLOBAL_STATE as ENVIRONMENT;
 fn with_config_dir_env<T>(value: Option<&str>, action: impl FnOnce() -> T) -> T {
     let _guard = ENVIRONMENT
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     unsafe {
         match value {
             Some(value) => std::env::set_var("MCP_REMOTE_CONFIG_DIR", value),
