@@ -203,3 +203,53 @@ fn a_stranger_on_the_callback_port_moves_the_redirect_to_the_port_in_use() {
         assert!(redirect_url.ends_with("/oauth/callback"), "{redirect_url}");
     });
 }
+
+#[test]
+fn the_provider_signs_in_at_the_discovered_authorization_server() {
+    in_config_dir(async || {
+        let (base, _requests) = serve(Arc::new(|request: &RecordedRequest| {
+            let base = format!("http://{}", request.header("host").unwrap());
+            match request.path.as_str() {
+                "/mcp" => reply(401, &[("www-authenticate", "Bearer")], ""),
+                "/.well-known/oauth-protected-resource/mcp" => reply(
+                    200,
+                    &[("content-type", "application/json")],
+                    &json!({
+                        "resource": format!("{base}/mcp"),
+                        "authorization_servers": [format!("{base}/auth")],
+                        "scopes_supported": ["files:read"],
+                    })
+                    .to_string(),
+                ),
+                "/.well-known/oauth-authorization-server/auth" => reply(
+                    200,
+                    &[("content-type", "application/json")],
+                    &json!({
+                        "issuer": format!("{base}/auth"),
+                        "authorization_endpoint": format!("{base}/auth/authorize"),
+                        "token_endpoint": format!("{base}/auth/token"),
+                        "response_types_supported": ["code"],
+                    })
+                    .to_string(),
+                ),
+                _ => reply(404, &[], ""),
+            }
+        }))
+        .await;
+        let args = command_line(&[&format!("{base}/mcp"), "--allow-http"]);
+
+        let sign_in = prepare_sign_in(&args, "MCP CLI Client", true)
+            .await
+            .unwrap();
+
+        let metadata = sign_in.auth_provider.client_metadata();
+        assert_eq!(metadata["client_name"], "MCP CLI Client");
+        assert_eq!(metadata["scope"], "files:read");
+        let server_metadata = sign_in
+            .auth_provider
+            .get_authorization_server_metadata()
+            .await
+            .unwrap();
+        assert_eq!(server_metadata["issuer"], format!("{base}/auth"));
+    });
+}
