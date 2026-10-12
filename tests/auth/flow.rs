@@ -28,6 +28,7 @@ struct Store {
     invalidated: Vec<CredentialScope>,
     resource_url: Option<String>,
     validated_resource: Option<(String, Option<String>)>,
+    prepared_for_scope: Option<Option<String>>,
 }
 
 struct TestProvider {
@@ -41,6 +42,8 @@ struct TestProvider {
     redirect_url: Option<Option<String>>,
     client_metadata: Option<Value>,
     client_metadata_url: Option<String>,
+    /// When set, `prepare_token_request` returns this grant instead of None.
+    prepared_grant: Option<Vec<(String, String)>>,
 }
 
 impl TestProvider {
@@ -53,6 +56,7 @@ impl TestProvider {
             redirect_url: None,
             client_metadata: None,
             client_metadata_url: None,
+            prepared_grant: None,
         }
     }
 
@@ -120,6 +124,14 @@ impl OAuthClientProvider for TestProvider {
     async fn save_code_verifier(&self, code_verifier: &str) -> Result<(), AuthError> {
         self.store().code_verifier = Some(code_verifier.to_owned());
         Ok(())
+    }
+
+    async fn prepare_token_request(
+        &self,
+        scope: Option<&str>,
+    ) -> Result<Option<Vec<(String, String)>>, AuthError> {
+        self.store().prepared_for_scope = Some(scope.map(str::to_owned));
+        Ok(self.prepared_grant.clone())
     }
 
     async fn code_verifier(&self) -> Result<String, AuthError> {
@@ -1047,6 +1059,59 @@ async fn fetch_token_refuses_an_unusable_code_exchange_unsent() {
         }
     );
     assert!(drain(&mut requests).is_empty());
+}
+
+#[tokio::test]
+async fn fetch_token_sends_the_grant_the_provider_prepares() {
+    let (base, mut requests) = auth_server(Arc::new(|_, _| None)).await;
+    let provider = TestProvider {
+        prepared_grant: Some(vec![
+            ("grant_type".to_owned(), "client_credentials".to_owned()),
+            ("scope".to_owned(), "read".to_owned()),
+        ]),
+        client_metadata: Some(json!({
+            "redirect_uris": ["http://localhost:3334/oauth/callback"],
+            "token_endpoint_auth_method": "none",
+            "scope": "read",
+        })),
+        ..TestProvider::new()
+    };
+    provider.store().client_information = Some(json!({"client_id": "cid", "issuer": base}));
+
+    // No authorization code is needed, and the scope comes from the client metadata.
+    let tokens = fetch_token(&provider, &base, FetchTokenOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(tokens["access_token"], "at-1");
+    assert_eq!(
+        provider.store().prepared_for_scope,
+        Some(Some("read".to_owned()))
+    );
+    let seen = drain(&mut requests);
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].path, "/token");
+    let sent = form(&seen[0].body);
+    assert_eq!(param(&sent, "grant_type"), Some("client_credentials"));
+    assert_eq!(param(&sent, "scope"), Some("read"));
+    assert_eq!(param(&sent, "client_id"), Some("cid"));
+    assert_eq!(param(&sent, "code"), None);
+    assert_eq!(param(&sent, "redirect_uri"), None);
+
+    // An explicit scope wins over the client metadata.
+    fetch_token(
+        &provider,
+        &base,
+        FetchTokenOptions {
+            scope: Some("write"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        provider.store().prepared_for_scope,
+        Some(Some("write".to_owned()))
+    );
 }
 
 #[tokio::test]
