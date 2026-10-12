@@ -2,7 +2,9 @@ use std::sync::{Arc, OnceLock};
 
 use rust_mcp_remote::auth::{AuthOptions, AuthResult, OAuthClientProvider, auth};
 use rust_mcp_remote::mcp_auth_config::{read_json_file, write_json_file};
-use rust_mcp_remote::node_oauth_client_provider::{NodeOAuthClientProvider, OAuthProviderOptions};
+use rust_mcp_remote::node_oauth_client_provider::{
+    NodeOAuthClientProvider, OAuthProviderOptions, PendingFlow,
+};
 use rust_mcp_remote::oauth_provider::OAuthProvider;
 use rust_mcp_remote::streamable_http::{
     StreamableHttpClientTransport, StreamableHttpOptions, TransportError,
@@ -461,4 +463,36 @@ async fn the_transport_signs_in_on_a_401_and_finish_auth_lets_the_retry_through(
     assert_eq!(post.header("authorization"), Some("Bearer at-1"));
     let tokens: Value = read_json_file(&hash, "tokens.json").unwrap();
     assert_eq!(tokens["access_token"], "at-1");
+}
+
+#[tokio::test]
+async fn redirect_to_authorization_stays_quiet_while_another_sign_in_is_pending() {
+    let (base, _requests) = auth_server().await;
+    let provider = provider(
+        &base,
+        &unique_hash("pending"),
+        OAuthProviderOptions {
+            authorization_server_metadata: Some(json!({"issuer": base})),
+            ..Default::default()
+        },
+    );
+    provider.lock().pending_flow = Some(PendingFlow {
+        state: "pending-state".to_owned(),
+        started_at: now_ms(),
+        challenge: Some("pending-challenge".to_owned()),
+    });
+
+    // Another auth() run brings its own challenge: no second browser tab.
+    let other = Url::parse(&format!("{base}/authorize?code_challenge=other")).unwrap();
+    assert_eq!(provider.redirect_to_authorization(&other).await, Ok(()));
+    assert_eq!(opened_url(&base), None);
+
+    // The run that owns the pending sign-in still gets its browser.
+    let owner = Url::parse(&format!(
+        "{base}/authorize?code_challenge=pending-challenge"
+    ))
+    .unwrap();
+    assert_eq!(provider.redirect_to_authorization(&owner).await, Ok(()));
+    let opened = opened_url(&base).expect("the owner's authorization URL was opened");
+    assert!(opened.contains("code_challenge=pending-challenge"));
 }
