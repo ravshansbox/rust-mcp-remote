@@ -15,7 +15,7 @@ fn metadata() -> Value {
     })
 }
 
-fn response(status: u16, body: Value) -> FormResponse {
+fn response(status: u16, body: &Value) -> FormResponse {
     FormResponse {
         status,
         body: body.to_string(),
@@ -58,15 +58,18 @@ fn requests_a_device_code_then_polls_for_tokens() {
         vec![
             response(
                 200,
-                json!({
+                &json!({
                     "device_code": "device-123",
                     "user_code": "ABCD-EFGH",
                     "verification_uri": "https://auth.example.com/activate",
                     "interval": 1,
                 }),
             ),
-            response(400, json!({ "error": "authorization_pending" })),
-            response(200, json!({ "access_token": "at", "token_type": "Bearer" })),
+            response(400, &json!({ "error": "authorization_pending" })),
+            response(
+                200,
+                &json!({ "access_token": "at", "token_type": "Bearer" }),
+            ),
         ],
     );
 
@@ -116,7 +119,7 @@ fn authenticates_with_the_selected_client_method() {
         &json!({ "client_id": "client-1", "client_secret": "s3cret" }),
         None,
         None,
-        vec![response(400, json!({ "error": "invalid_client" }))],
+        vec![response(400, &json!({ "error": "invalid_client" }))],
     );
 
     assert_eq!(
@@ -191,7 +194,7 @@ fn rejects_an_incomplete_device_authorization_response() {
         &json!({ "client_id": "c" }),
         None,
         None,
-        vec![response(200, json!({ "device_code": "d" }))],
+        vec![response(200, &json!({ "device_code": "d" }))],
     );
 
     assert_eq!(

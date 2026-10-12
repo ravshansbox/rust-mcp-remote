@@ -21,7 +21,7 @@ fn request() -> FormRequest {
     build_device_token_request("none", "client-1", None, "device-123", None).unwrap()
 }
 
-fn response(status: u16, body: serde_json::Value) -> FormResponse {
+fn response(status: u16, body: &serde_json::Value) -> FormResponse {
     FormResponse {
         status,
         body: body.to_string(),
@@ -33,8 +33,11 @@ fn returns_the_tokens_after_pending_responses() {
     let clock = RefCell::new(0.0);
     let sleeps = RefCell::new(Vec::new());
     let mut responses = vec![
-        response(400, json!({ "error": "authorization_pending" })),
-        response(200, json!({ "access_token": "at", "token_type": "Bearer" })),
+        response(400, &json!({ "error": "authorization_pending" })),
+        response(
+            200,
+            &json!({ "access_token": "at", "token_type": "Bearer" }),
+        ),
     ]
     .into_iter();
     let mut sent = Vec::new();
@@ -69,9 +72,12 @@ fn backs_off_permanently_after_slow_down() {
     let clock = RefCell::new(0.0);
     let sleeps = RefCell::new(Vec::new());
     let mut responses = vec![
-        response(400, json!({ "error": "slow_down" })),
-        response(400, json!({ "error": "authorization_pending" })),
-        response(200, json!({ "access_token": "at", "token_type": "Bearer" })),
+        response(400, &json!({ "error": "slow_down" })),
+        response(400, &json!({ "error": "authorization_pending" })),
+        response(
+            200,
+            &json!({ "access_token": "at", "token_type": "Bearer" }),
+        ),
     ]
     .into_iter();
 
@@ -103,7 +109,7 @@ fn stops_when_access_is_denied() {
         &request(),
         || *clock.borrow(),
         |seconds| *clock.borrow_mut() += seconds * 1000.0,
-        |_, _| Ok(response(400, json!({ "error": "access_denied" }))),
+        |_, _| Ok(response(400, &json!({ "error": "access_denied" }))),
     );
 
     assert_eq!(tokens, Err("Authorization was denied".to_string()));
@@ -144,7 +150,7 @@ fn gives_up_once_the_device_code_lapses() {
         |seconds| *clock.borrow_mut() += seconds * 1000.0,
         |_, _| {
             attempts += 1;
-            Ok(response(400, json!({ "error": "authorization_pending" })))
+            Ok(response(400, &json!({ "error": "authorization_pending" })))
         },
     );
 
