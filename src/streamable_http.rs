@@ -785,7 +785,7 @@ impl Inner {
             .lock()
             .ok()
             .and_then(|slot| slot.clone());
-        options.fetch = self.auth_fetch.clone();
+        options.fetch.clone_from(&self.auth_fetch);
         options.skip_issuer_metadata_validation = self.skip_issuer_metadata_validation;
         options
     }
@@ -824,7 +824,7 @@ impl Inner {
         let mut options = AuthOptions::new(self.url.clone());
         options.resource_metadata_url = challenge.resource_metadata_url;
         options.scope = challenge.scope;
-        options.fetch = self.auth_fetch.clone();
+        options.fetch.clone_from(&self.auth_fetch);
         options.skip_issuer_metadata_validation = self.skip_issuer_metadata_validation;
         if oauth.auth(options).await? != AuthResult::Authorized {
             return Err(TransportError::Unauthorized("Unauthorized".to_owned()));

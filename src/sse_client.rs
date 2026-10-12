@@ -253,7 +253,7 @@ impl Inner {
             .ok()
             .and_then(|slot| slot.clone());
         options.scope = self.scope.lock().ok().and_then(|slot| slot.clone());
-        options.fetch = self.auth_fetch.clone();
+        options.fetch.clone_from(&self.auth_fetch);
         options.skip_issuer_metadata_validation = self.skip_issuer_metadata_validation;
         options
     }
