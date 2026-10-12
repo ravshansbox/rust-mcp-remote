@@ -90,14 +90,8 @@ impl CookieJar {
 
 fn parse_set_cookie(header: &str, target: &Url, now: SystemTime) -> Option<StoredCookie> {
     let mut parts = header.split(';');
-    let pair = parts.next()?;
-    let separator = pair.find('=')?;
-    if separator < 1 {
-        return None;
-    }
-
-    let name = pair[..separator].trim();
-    let value = pair[separator + 1..].trim();
+    let (name, value) = parts.next()?.split_once('=')?;
+    let (name, value) = (name.trim(), value.trim());
     if name.is_empty() {
         return None;
     }
@@ -107,8 +101,8 @@ fn parse_set_cookie(header: &str, target: &Url, now: SystemTime) -> Option<Store
     let mut max_age = None;
 
     for attribute in parts {
-        let (key, attribute_value) = match attribute.find('=') {
-            Some(index) => (&attribute[..index], attribute[index + 1..].trim()),
+        let (key, attribute_value) = match attribute.split_once('=') {
+            Some((key, value)) => (key, value.trim()),
             None => (attribute, ""),
         };
         let key = key.trim().to_ascii_lowercase();

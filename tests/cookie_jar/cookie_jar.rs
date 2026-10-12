@@ -186,7 +186,7 @@ fn a_cookie_with_no_expiry_lasts_as_long_as_the_process() {
 
 #[test]
 fn a_set_cookie_that_is_malformed_is_ignored() {
-    for header in ["AWSALB", "=node-1; Path=/", ""] {
+    for header in ["AWSALB", "=node-1; Path=/", "  =node-1", ""] {
         let mut jar = CookieJar::new();
         jar.capture("https://mcp.example.com/mcp", &[header]);
 
