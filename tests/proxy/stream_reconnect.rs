@@ -30,7 +30,7 @@ fn reconnect(harness: &Harness, slot: &StreamReconnectHook) {
 
 /// Completes the lifecycle against the old session.
 async fn initialized(harness: &mut Harness) {
-    from_client(harness, initialize(json!("1")));
+    from_client(harness, initialize(&json!("1")));
     next(&mut harness.server.sent).await;
     from_server(
         harness,

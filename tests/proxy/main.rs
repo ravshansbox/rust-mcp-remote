@@ -164,7 +164,7 @@ fn from_server(harness: &Harness, message: Value) {
         .unwrap();
 }
 
-fn initialize(id: Value) -> Value {
+fn initialize(id: &Value) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "method": "initialize", "params": {
         "protocolVersion": "2025-06-18", "capabilities": {},
         "clientInfo": {"name": "client", "version": "1"}}})
@@ -173,7 +173,7 @@ fn initialize(id: Value) -> Value {
 #[tokio::test]
 async fn forwards_initialize_with_a_marked_client_name_and_applies_the_negotiated_version() {
     let mut harness = start(ProxyOptions::default());
-    from_client(&harness, initialize(json!(1)));
+    from_client(&harness, initialize(&json!(1)));
 
     let forwarded = next(&mut harness.server.sent).await;
     assert_eq!(
@@ -399,7 +399,7 @@ async fn fails_an_initialize_the_server_accepted_but_never_answered() {
         initialize_timeout: Duration::from_millis(100),
         ..ProxyOptions::default()
     });
-    from_client(&harness, initialize(json!("init")));
+    from_client(&harness, initialize(&json!("init")));
     next(&mut harness.server.sent).await;
     assert_eq!(
         next(&mut harness.client.sent).await,
@@ -578,7 +578,7 @@ async fn discards_a_token_refused_right_after_it_was_issued_then_signs_in_again(
 #[tokio::test]
 async fn re_establishes_an_expired_session_and_resends_the_request() {
     let mut harness = start(ProxyOptions::default());
-    from_client(&harness, initialize(json!(0)));
+    from_client(&harness, initialize(&json!(0)));
     let forwarded_initialize = next(&mut harness.server.sent).await;
     from_server(
         &harness,
@@ -677,7 +677,7 @@ async fn a_404_without_a_session_or_a_refused_reinitialize_is_answered_with_the_
 #[tokio::test]
 async fn a_rejected_reinitialize_fails_the_request() {
     let mut harness = start(ProxyOptions::default());
-    from_client(&harness, initialize(json!(0)));
+    from_client(&harness, initialize(&json!(0)));
     next(&mut harness.server.sent).await;
     from_server(
         &harness,

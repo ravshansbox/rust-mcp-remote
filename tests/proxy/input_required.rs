@@ -34,7 +34,7 @@ async fn bridged(options: ProxyOptions) -> Harness {
     harness
 }
 
-fn request(method: &str, id: &str, params: Value) -> Value {
+fn request(method: &str, id: &str, params: &Value) -> Value {
     json!({"jsonrpc": "2.0", "method": method, "id": id, "params": params})
 }
 
@@ -54,7 +54,7 @@ fn ask(harness: &Harness, sent: &Value, method: &str) {
 
 /// Sends a request, has the server ask for sampling, and returns the question the client got.
 async fn start_exchange(harness: &mut Harness, method: &str, id: &str) -> Value {
-    from_client(harness, request(method, id, json!({"name": "x"})));
+    from_client(harness, request(method, id, &json!({"name": "x"})));
     let sent = next(&mut harness.server.sent).await;
     assert_eq!(sent["id"], id);
     ask(harness, &sent, "sampling/createMessage");
@@ -75,7 +75,7 @@ async fn a_mid_request_question_is_put_to_the_client_as_the_request_it_does_unde
     let mut harness = bridged(auto()).await;
     from_client(
         &harness,
-        request("tools/call", "call-1", json!({"name": "search"})),
+        request("tools/call", "call-1", &json!({"name": "search"})),
     );
     let call = next(&mut harness.server.sent).await;
     from_server(
@@ -236,7 +236,7 @@ async fn a_server_asking_for_input_but_naming_none_does_not_get_the_tool_run_aga
     let mut harness = bridged(auto()).await;
     from_client(
         &harness,
-        request("tools/call", "call-1", json!({"name": "sendEmail"})),
+        request("tools/call", "call-1", &json!({"name": "sendEmail"})),
     );
     let call = next(&mut harness.server.sent).await;
     from_server(
@@ -258,7 +258,7 @@ async fn a_server_asking_for_input_but_naming_none_does_not_get_the_tool_run_aga
 #[tokio::test]
 async fn too_many_questions_at_once_are_refused() {
     let mut harness = bridged(auto()).await;
-    from_client(&harness, request("tools/call", "call-1", json!({})));
+    from_client(&harness, request("tools/call", "call-1", &json!({})));
     let call = next(&mut harness.server.sent).await;
     let questions: serde_json::Map<String, Value> = (0..9)
         .map(|n| {
@@ -287,7 +287,7 @@ async fn too_many_questions_at_once_are_refused() {
 #[tokio::test]
 async fn a_client_is_not_asked_for_something_it_never_said_it_could_do() {
     let mut harness = bridged(auto()).await;
-    from_client(&harness, request("tools/call", "call-1", json!({})));
+    from_client(&harness, request("tools/call", "call-1", &json!({})));
     let call = next(&mut harness.server.sent).await;
     ask(&harness, &call, "roots/list");
 
@@ -305,7 +305,7 @@ async fn a_client_is_not_asked_for_something_it_never_said_it_could_do() {
 #[tokio::test]
 async fn a_question_this_proxy_cannot_put_to_a_2025_era_client_is_reported_not_dropped() {
     let mut harness = bridged(auto()).await;
-    from_client(&harness, request("tools/call", "call-1", json!({})));
+    from_client(&harness, request("tools/call", "call-1", &json!({})));
     let call = next(&mut harness.server.sent).await;
     ask(&harness, &call, "something/new");
 
@@ -436,7 +436,7 @@ async fn a_stranded_exchange_does_not_free_the_request_that_reused_its_id() {
 
     // The client reuses X for a fresh request identical to the first, which the server has not
     // answered yet
-    from_client(&harness, request("tools/list", "X", json!({"name": "x"})));
+    from_client(&harness, request("tools/list", "X", &json!({"name": "x"})));
     assert_eq!(next(&mut harness.server.sent).await["id"], "X");
 
     // The stranded exchange runs all the way to an answer, which is dropped - and must not take
@@ -469,7 +469,7 @@ async fn a_request_for_more_input_on_an_exchange_already_over_is_not_answered_tw
         ..auto()
     })
     .await;
-    from_client(&harness, request("tools/call", "call-1", json!({})));
+    from_client(&harness, request("tools/call", "call-1", &json!({})));
     let call = next(&mut harness.server.sent).await;
 
     // The stream drops, which fails the request in flight

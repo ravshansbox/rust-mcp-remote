@@ -127,7 +127,7 @@ impl Network {
     }
 }
 
-fn json_reply(status: u16, body: Value) -> Reply {
+fn json_reply(status: u16, body: &Value) -> Reply {
     reply(status, &[JSON], &body.to_string())
 }
 
@@ -143,20 +143,20 @@ fn handle(state: &mut NetworkState, base: &str, request: &RecordedRequest) -> Re
         if state.token_failure {
             return json_reply(
                 400,
-                json!({"error": "invalid_client", "error_description": "Client credentials rejected"}),
+                &json!({"error": "invalid_client", "error_description": "Client credentials rejected"}),
             );
         }
         if state.token_unavailable {
             return json_reply(
                 503,
-                json!({"error": "temporarily_unavailable", "error_description": "Token endpoint unavailable"}),
+                &json!({"error": "temporarily_unavailable", "error_description": "Token endpoint unavailable"}),
             );
         }
         let access_token = format!("issued-{}", state.token_requests.len());
         state.accepted_token.clone_from(&access_token);
         return json_reply(
             200,
-            json!({"access_token": access_token, "token_type": "Bearer", "expires_in": 3600}),
+            &json!({"access_token": access_token, "token_type": "Bearer", "expires_in": 3600}),
         );
     }
     if path != "/mcp" {
@@ -204,7 +204,7 @@ fn handle(state: &mut NetworkState, base: &str, request: &RecordedRequest) -> Re
     } else {
         json!({"tools": [tool()]})
     };
-    json_reply(200, json!({"jsonrpc": "2.0", "id": id, "result": result}))
+    json_reply(200, &json!({"jsonrpc": "2.0", "id": id, "result": result}))
 }
 
 fn provider_with(
