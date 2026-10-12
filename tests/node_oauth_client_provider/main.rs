@@ -25,6 +25,25 @@ pub fn with_temporary_config_dir<T>(action: impl FnOnce() -> T) -> T {
     result
 }
 
+/// Milliseconds since the Unix epoch, as stored in a refresh lease's `at` field.
+pub fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("time after epoch")
+        .as_millis() as u64
+}
+
+/// Writes a refresh lease for `hash` held by another process `pid`, taken just now.
+pub fn write_sibling_lease(hash: &str, pid: u32) {
+    let lease = serde_json::json!({ "pid": pid, "nonce": "theirs", "at": now_millis() });
+    rust_mcp_remote::mcp_auth_config::write_text_file(
+        hash,
+        rust_mcp_remote::node_oauth_client_provider::REFRESH_LEASE_FILE,
+        &lease.to_string(),
+    )
+    .expect("write lease");
+}
+
 mod apply_authorize_params;
 mod apply_scope;
 mod as_bearer_tokens;

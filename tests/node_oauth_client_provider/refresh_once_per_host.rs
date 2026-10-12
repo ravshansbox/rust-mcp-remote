@@ -2,15 +2,13 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use rust_mcp_remote::mcp_auth_config::{
-    delete_config_file, read_json_file, write_json_file, write_text_file,
-};
+use rust_mcp_remote::mcp_auth_config::{delete_config_file, read_json_file, write_json_file};
 use rust_mcp_remote::node_oauth_client_provider::{
     NodeOAuthClientProvider, OAuthProviderOptions, REFRESH_LEASE_FILE,
 };
 use serde_json::{Value, json};
 
-use crate::GLOBAL_STATE as ENVIRONMENT;
+use crate::{GLOBAL_STATE as ENVIRONMENT, now_millis, write_sibling_lease};
 
 const HASH: &str = "refresh-once-per-host-test";
 const DEAD_PID: u32 = 0x7fffffff;
@@ -49,18 +47,6 @@ fn provider() -> NodeOAuthClientProvider {
         ..Default::default()
     })
     .unwrap()
-}
-
-fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time after epoch")
-        .as_millis() as u64
-}
-
-fn write_lease(pid: u32) {
-    let lease = json!({ "pid": pid, "nonce": "theirs", "at": now_millis() });
-    write_text_file(HASH, REFRESH_LEASE_FILE, &lease.to_string()).expect("write lease");
 }
 
 fn refreshed() -> Value {
@@ -108,7 +94,7 @@ fn returns_the_token_a_live_sibling_wrote_without_refreshing() {
     with_temporary_config_dir(|| {
         let tokens = json!({ "access_token": "sibling", "token_type": "Bearer", "expires_at": now_millis() + 3_600_000 });
         write_json_file(HASH, "tokens.json", &tokens).expect("write tokens");
-        write_lease(std::process::id());
+        write_sibling_lease(HASH, std::process::id());
 
         let result = provider().refresh_once_per_host("callers", |_| panic!("must not refresh"));
 
@@ -121,7 +107,7 @@ fn returns_the_token_a_live_sibling_wrote_without_refreshing() {
 #[test]
 fn gives_up_when_the_sibling_released_without_a_fresh_token() {
     with_temporary_config_dir(|| {
-        write_lease(std::process::id());
+        write_sibling_lease(HASH, std::process::id());
         let releaser = std::thread::spawn(|| {
             std::thread::sleep(Duration::from_millis(300));
             delete_config_file(HASH, REFRESH_LEASE_FILE);
@@ -137,7 +123,7 @@ fn gives_up_when_the_sibling_released_without_a_fresh_token() {
 #[test]
 fn picks_up_the_refresh_an_abandoned_sibling_left() {
     with_temporary_config_dir(|| {
-        write_lease(DEAD_PID);
+        write_sibling_lease(HASH, DEAD_PID);
         let redeemed = RefCell::new(None);
 
         let result = provider().refresh_once_per_host("callers", |refresh_token| {
