@@ -97,3 +97,57 @@ async fn refuses_a_plain_http_endpoint_before_sending_the_secret() {
             .starts_with("Refusing to send the client secret to http://idp.example.com over http.")
     );
 }
+
+#[tokio::test]
+async fn uses_basic_authentication_when_the_server_advertises_it() {
+    let (base, mut requests) = serve(Arc::new(|_: &RecordedRequest| {
+        reply(
+            200,
+            &[("content-type", "application/json")],
+            r#"{"access_token":"cc-2","token_type":"Bearer"}"#,
+        )
+    }))
+    .await;
+    let metadata = json!({
+        "token_endpoint": format!("{base}/token"),
+        "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post"],
+    });
+
+    authorize_with_client_credentials(
+        &metadata,
+        &json!({"client_id": "machine", "client_secret": "s3cret"}),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let request = requests.try_recv().unwrap();
+    assert_eq!(
+        request.header("authorization"),
+        Some("Basic bWFjaGluZTpzM2NyZXQ=")
+    );
+    assert_eq!(request.body, "grant_type=client_credentials");
+}
+
+#[tokio::test]
+async fn rejects_a_success_response_that_is_not_a_token() {
+    let (metadata, _requests) = token_server(|_| {
+        reply(
+            200,
+            &[("content-type", "application/json")],
+            r#"{"token_type":"Bearer"}"#,
+        )
+    })
+    .await;
+
+    let error = authorize_with_client_credentials(
+        &metadata,
+        &json!({"client_id": "machine", "client_secret": "s3cret"}),
+        None,
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error, "ZodError: \"access_token\" is required");
+}
