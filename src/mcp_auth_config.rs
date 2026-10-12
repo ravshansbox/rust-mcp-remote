@@ -8,6 +8,14 @@ use serde_json::Value;
 
 const CONFIG_STORE_VERSION: u32 = 1;
 
+/// Milliseconds since the Unix epoch, like JavaScript's `Date.now()`.
+pub(crate) fn now_ms() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as f64
+}
+
 pub fn config_dir() -> PathBuf {
     let base_config_dir = std::env::var_os("MCP_REMOTE_CONFIG_DIR")
         .filter(|value| !value.is_empty())
@@ -42,10 +50,7 @@ pub fn write_json_file(server_url_hash: &str, filename: &str, data: &Value) -> s
     ensure_config_dir()?;
     let file_path = config_file_path(server_url_hash, filename);
     let serialized = serde_json::to_string_pretty(data)?;
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
+    let millis = now_ms() as u64;
     let mut temp_path = file_path.clone().into_os_string();
     temp_path.push(format!(".{}.{millis}.tmp", std::process::id()));
     let temp_path = PathBuf::from(temp_path);
@@ -166,11 +171,7 @@ pub fn read_config_lease(
     max_age: Duration,
 ) -> Option<ConfigLease> {
     let lease = read_lease_file(server_url_hash, filename)?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as f64;
-    let live = now - lease.at < max_age.as_millis() as f64 && process_is_alive(lease.pid);
+    let live = now_ms() - lease.at < max_age.as_millis() as f64 && process_is_alive(lease.pid);
     Some(ConfigLease {
         pid: lease.pid,
         nonce: lease.nonce,
@@ -195,10 +196,7 @@ pub fn acquire_config_lease(
     let nonce = uuid::Uuid::new_v4().to_string();
 
     for attempt in 0..2 {
-        let at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
+        let at = now_ms() as u64;
         let lease = serde_json::json!({ "pid": std::process::id(), "nonce": nonce, "at": at });
         let Ok(contents) = serde_json::to_string_pretty(&lease) else {
             return Ok(None);

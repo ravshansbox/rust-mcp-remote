@@ -6,7 +6,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 use tokio::sync::OnceCell;
@@ -23,7 +23,7 @@ use crate::device_authorization::{
     supports_device_authorization,
 };
 use crate::logging::{debug_log, log};
-use crate::mcp_auth_config::release_config_lease;
+use crate::mcp_auth_config::{now_ms, release_config_lease};
 use crate::node_oauth_client_provider::REFRESH_LEASE_FILE;
 use crate::node_oauth_client_provider::{
     ClientRegistrationSource, CredentialScope, NodeOAuthClientProvider, ResourceSelection,
@@ -36,13 +36,6 @@ use crate::utils;
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 type InFlight<T> = Mutex<Option<Arc<OnceCell<T>>>>;
-
-fn now_ms() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as f64
-}
 
 fn other(error: impl ToString) -> AuthError {
     AuthError::Other(error.to_string())

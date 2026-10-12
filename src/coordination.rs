@@ -1,6 +1,6 @@
 use std::future::Future;
 use std::sync::{Arc, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, OnceCell};
@@ -10,7 +10,7 @@ use crate::callback_server::{
     OAuthCallbackServerOptions, setup_oauth_callback_server_with_long_poll,
 };
 use crate::logging::{debug_log, log};
-use crate::mcp_auth_config::read_json_file;
+use crate::mcp_auth_config::{now_ms, read_json_file};
 
 pub const FOLLOWER_PATIENCE_MS: u64 = 3 * 60_000;
 pub const REFRESH_FOLLOWER_PATIENCE_MS: u64 = 10_000;
@@ -66,11 +66,7 @@ pub fn has_usable_tokens_at(server_url_hash: &str, now_ms: u64) -> bool {
 }
 
 pub fn has_usable_tokens(server_url_hash: &str) -> bool {
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or_default();
-    has_usable_tokens_at(server_url_hash, now_ms)
+    has_usable_tokens_at(server_url_hash, now_ms() as u64)
 }
 
 /// Why coordinating the sign-in failed.

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 
 use base64::Engine;
 use base64::alphabet;
@@ -13,7 +13,7 @@ use url::Url;
 use crate::device_authorization::{DEVICE_CODE_GRANT_TYPE, supports_device_authorization};
 use crate::logging::{debug_log, iso_timestamp, log};
 use crate::mcp_auth_config::{
-    acquire_config_lease, delete_config_file, delete_stale_config_files, read_config_lease,
+    acquire_config_lease, delete_config_file, delete_stale_config_files, now_ms, read_config_lease,
     read_json_file, read_text_file, release_config_lease, write_json_file, write_text_file,
 };
 use crate::utils::{MCP_REMOTE_VERSION, build_redirect_url, lock};
@@ -289,11 +289,7 @@ pub fn await_refresh_by_sibling(server_url_hash: &str) -> SiblingRefresh {
         let stored = read_json_file::<Value>(server_url_hash, "tokens.json");
         if let Some(stored) = stored {
             let expires_at = stored.get("expires_at").and_then(Value::as_f64);
-            let now_ms = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as f64;
-            if is_sibling_token_fresh(expires_at, now_ms) {
+            if is_sibling_token_fresh(expires_at, now_ms()) {
                 return SiblingRefresh::Tokens(stored);
             }
         }
