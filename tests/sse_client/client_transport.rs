@@ -7,7 +7,7 @@ use reqwest::Url;
 use rust_mcp_remote::auth::{AuthError, AuthOptions, AuthResult};
 use rust_mcp_remote::sse_client::{SseClientOptions, SseClientTransport};
 use rust_mcp_remote::stdio::TransportEvent;
-use rust_mcp_remote::streamable_http::{BoxFuture, TransportOAuth};
+use rust_mcp_remote::streamable_http::{BoxFuture, FetchFn, TransportOAuth, default_fetch};
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -649,5 +649,83 @@ async fn resolves_a_relative_endpoint_against_the_stream_url_and_follows_a_later
     );
     transport.send(&ping).await.unwrap();
     assert_eq!(requests.recv().await.unwrap().path, "/other?sessionId=2");
+    transport.close();
+}
+
+/// A fetch that records the method of every request it carries before sending it.
+fn recording_fetch() -> (FetchFn, Arc<Mutex<Vec<String>>>) {
+    let methods = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&methods);
+    let inner = default_fetch();
+    let fetch: FetchFn = Arc::new(move |request| {
+        recorded
+            .lock()
+            .unwrap()
+            .push(request.method().as_str().to_owned());
+        inner(request)
+    });
+    (fetch, methods)
+}
+
+#[tokio::test]
+async fn opens_the_stream_with_the_event_source_fetch_and_posts_with_fetch() {
+    let streams = Streams::default();
+    let handler_streams = streams.clone();
+    let (base, _requests) = serve(Arc::new(move |request: &Recorded| {
+        if request.method == "GET" {
+            handler_streams.open(ENDPOINT_EVENT)
+        } else {
+            fixed(202, &[], "Accepted")
+        }
+    }))
+    .await;
+    let (fetch, posted) = recording_fetch();
+    let (event_source_fetch, streamed) = recording_fetch();
+    let (transport, _events) = transport(
+        &base,
+        SseClientOptions {
+            fetch: Some(fetch),
+            event_source_fetch: Some(event_source_fetch),
+            ..SseClientOptions::default()
+        },
+    );
+
+    transport.start().await.unwrap();
+    transport
+        .send(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+        .await
+        .unwrap();
+    assert_eq!(*streamed.lock().unwrap(), ["GET"]);
+    assert_eq!(*posted.lock().unwrap(), ["POST"]);
+    transport.close();
+}
+
+#[tokio::test]
+async fn opens_the_stream_with_fetch_when_no_event_source_fetch_is_set() {
+    let streams = Streams::default();
+    let handler_streams = streams.clone();
+    let (base, _requests) = serve(Arc::new(move |request: &Recorded| {
+        if request.method == "GET" {
+            handler_streams.open(ENDPOINT_EVENT)
+        } else {
+            fixed(202, &[], "Accepted")
+        }
+    }))
+    .await;
+    let (fetch, methods) = recording_fetch();
+    let (transport, _events) = transport(
+        &base,
+        SseClientOptions {
+            fetch: Some(fetch),
+            ..SseClientOptions::default()
+        },
+    );
+
+    transport.start().await.unwrap();
+    transport
+        .send(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+        .await
+        .unwrap();
+    assert_eq!(*methods.lock().unwrap(), ["GET", "POST"]);
     transport.close();
 }
