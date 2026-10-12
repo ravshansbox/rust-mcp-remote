@@ -1,39 +1,14 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use rust_mcp_remote::logging::{set_current_server_url_hash, set_debug, set_silent};
 use rust_mcp_remote::protocol_era::ProtocolMode;
 use rust_mcp_remote::utils::{
     KeepAliveConfig, TransportStrategy, calculate_default_port, get_server_url_hash,
     parse_command_line_args_to,
 };
 
-use crate::GLOBAL_STATE;
+use crate::with_temporary_config_dir;
 
 const USAGE: &str = "Usage: mcp-remote <https://server-url> [callback-port]";
-
-fn with_temporary_config_dir<T>(action: impl FnOnce() -> T) -> T {
-    let _guard = GLOBAL_STATE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time after epoch")
-        .as_nanos();
-    let directory: PathBuf = std::env::temp_dir().join(format!(
-        "mcp-remote-parse-command-line-args-{}-{nanos}",
-        std::process::id()
-    ));
-    unsafe { std::env::set_var("MCP_REMOTE_CONFIG_DIR", &directory) };
-    let result = action();
-    unsafe { std::env::remove_var("MCP_REMOTE_CONFIG_DIR") };
-    let _ = std::fs::remove_dir_all(&directory);
-    set_debug(false);
-    set_silent(false);
-    set_current_server_url_hash(None);
-    result
-}
 
 fn arguments(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| value.to_string()).collect()

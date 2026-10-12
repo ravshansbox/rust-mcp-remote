@@ -1,37 +1,12 @@
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use rust_mcp_remote::logging::{
     debug_log_to, log_to, set_current_server_url_hash, set_debug, set_silent,
 };
 use rust_mcp_remote::mcp_auth_config::config_file_path;
 use serde_json::json;
 
-use crate::{GLOBAL_STATE, console_text};
+use crate::{console_text, with_temporary_config_dir};
 
 const HASH: &str = "logging-flags-test";
-
-fn with_temporary_config_dir<T>(action: impl FnOnce() -> T) -> T {
-    let _guard = GLOBAL_STATE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time after epoch")
-        .as_nanos();
-    let directory: PathBuf = std::env::temp_dir().join(format!(
-        "mcp-remote-logging-flags-{}-{nanos}",
-        std::process::id()
-    ));
-    unsafe { std::env::set_var("MCP_REMOTE_CONFIG_DIR", &directory) };
-    let result = action();
-    unsafe { std::env::remove_var("MCP_REMOTE_CONFIG_DIR") };
-    let _ = std::fs::remove_dir_all(&directory);
-    set_debug(false);
-    set_silent(false);
-    set_current_server_url_hash(None);
-    result
-}
 
 #[test]
 fn debug_log_does_nothing_when_debug_is_off() {
