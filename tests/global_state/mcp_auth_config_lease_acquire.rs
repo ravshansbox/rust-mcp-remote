@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rust_mcp_remote::mcp_auth_config::{
@@ -7,30 +6,12 @@ use rust_mcp_remote::mcp_auth_config::{
 };
 use serde_json::{Value, json};
 
-use crate::GLOBAL_STATE as ENVIRONMENT;
+use crate::with_temporary_config_dir;
 
 const HASH: &str = "lease-acquire-test";
 const FILENAME: &str = "refresh_in_progress.json";
 const TTL: Duration = Duration::from_secs(30);
 const DEAD_PID: u32 = 0x7fffffff;
-
-fn with_temporary_config_dir<T>(action: impl FnOnce() -> T) -> T {
-    let _guard = ENVIRONMENT
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time after epoch")
-        .as_nanos();
-    let directory: PathBuf =
-        std::env::temp_dir().join(format!("mcp-remote-config-{}-{nanos}", std::process::id()));
-    std::fs::create_dir_all(&directory).expect("create temporary directory");
-    unsafe { std::env::set_var("MCP_REMOTE_CONFIG_DIR", &directory) };
-    let result = action();
-    unsafe { std::env::remove_var("MCP_REMOTE_CONFIG_DIR") };
-    std::fs::remove_dir_all(&directory).expect("remove temporary directory");
-    result
-}
 
 fn now_millis() -> u128 {
     SystemTime::now()
