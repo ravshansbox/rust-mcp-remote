@@ -1,23 +1,9 @@
+use crate::identity;
 use rust_mcp_remote::protocol_era::{
     LATEST_PROTOCOL_VERSION, LegacyClientIdentity, SUPPORTED_PROTOCOL_VERSIONS,
     synthesize_initialize_result,
 };
-use serde_json::{Map, Value, json};
-
-fn identity() -> LegacyClientIdentity {
-    LegacyClientIdentity {
-        protocol_version: Some("2025-11-25".to_string()),
-        capabilities: Some(object(json!({ "roots": {} }))),
-        client_info: Some(json!({ "name": "desktop-host", "version": "0.1.0" })),
-    }
-}
-
-fn object(value: Value) -> Map<String, Value> {
-    match value {
-        Value::Object(map) => map,
-        _ => panic!("not an object"),
-    }
-}
+use serde_json::{Value, json};
 
 fn discover() -> Value {
     json!({ "supportedVersions": ["2026-07-28"], "capabilities": { "tools": {} } })

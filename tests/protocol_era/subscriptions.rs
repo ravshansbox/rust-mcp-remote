@@ -1,15 +1,9 @@
+use crate::object;
 use rust_mcp_remote::protocol_era::{
     MAX_INPUT_REQUESTS_PER_ROUND, MAX_INPUT_REQUIRED_ROUNDS, input_required_retry_params,
     subscription_filter_for, unacknowledged_subscriptions,
 };
-use serde_json::{Map, Value, json};
-
-fn object(value: Value) -> Map<String, Value> {
-    match value {
-        Value::Object(map) => map,
-        _ => panic!("not an object"),
-    }
-}
+use serde_json::{Map, json};
 
 #[test]
 fn the_filter_asks_only_for_the_changes_the_server_announces() {

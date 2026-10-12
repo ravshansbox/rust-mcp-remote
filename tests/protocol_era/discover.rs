@@ -1,24 +1,10 @@
+use crate::identity;
 use rust_mcp_remote::protocol_era::{
     FIRST_MODERN_PROTOCOL_VERSION, LegacyClientIdentity, RETIRED_SET_LOG_LEVEL,
     RETIRED_SUBSCRIBE_RESOURCE, RETIRED_UNSUBSCRIBE_RESOURCE, SUPPORTED_MODERN_VERSIONS,
     discover_request,
 };
-use serde_json::{Map, Value, json};
-
-fn identity() -> LegacyClientIdentity {
-    LegacyClientIdentity {
-        protocol_version: Some("2025-11-25".to_string()),
-        capabilities: Some(object(json!({ "roots": {} }))),
-        client_info: Some(json!({ "name": "desktop-host", "version": "0.1.0" })),
-    }
-}
-
-fn object(value: Value) -> Map<String, Value> {
-    match value {
-        Value::Object(map) => map,
-        _ => panic!("not an object"),
-    }
-}
+use serde_json::json;
 
 #[test]
 fn the_probe_itself_is_written_the_same_way_as_everything_after_it() {
