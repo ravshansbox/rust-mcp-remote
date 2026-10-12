@@ -133,6 +133,34 @@ fn resource_checks_compare_origin_and_path_prefix() {
 }
 
 #[test]
+fn resource_checks_refuse_a_parent_path_or_another_port() {
+    assert!(!check_resource_allowed(
+        &url("https://a.example/mcp"),
+        &url("https://a.example/mcp/x")
+    ));
+    assert!(!check_resource_allowed(
+        &url("https://a.example/mcp"),
+        &url("https://a.example/mcp/")
+    ));
+    assert!(check_resource_allowed(
+        &url("https://a.example/mcp/"),
+        &url("https://a.example/mcp")
+    ));
+    assert!(check_resource_allowed(
+        &url("https://a.example:443/mcp"),
+        &url("https://a.example/mcp")
+    ));
+    assert!(!check_resource_allowed(
+        &url("https://a.example:8443/mcp"),
+        &url("https://a.example/mcp")
+    ));
+    assert!(!check_resource_allowed(
+        &url("http://a.example/mcp"),
+        &url("https://a.example/mcp")
+    ));
+}
+
+#[test]
 fn discovery_urls_cover_oauth_and_oidc_paths() {
     let root = build_discovery_urls(&url("https://auth.example"));
     assert_eq!(
