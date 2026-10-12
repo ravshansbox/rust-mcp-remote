@@ -63,3 +63,39 @@ fn encodes_the_userinfo_again() {
         Ok("https://us%2520er:p%2540ss@example.com/".to_owned())
     );
 }
+
+#[test]
+fn keeps_only_the_key_of_a_query_parameter_with_an_empty_value() {
+    assert_eq!(
+        sanitize_url("https://example.com/cb?code=&state=x&=v"),
+        Ok("https://example.com/cb?code&state=x&=v".to_owned())
+    );
+}
+
+#[test]
+fn accepts_an_internationalized_hostname_in_its_punycode_form() {
+    assert_eq!(
+        sanitize_url("https://bücher.example/"),
+        Ok("https://xn--bcher-kva.example/".to_owned())
+    );
+}
+
+#[test]
+fn drops_a_default_port_and_keeps_any_other() {
+    assert_eq!(
+        sanitize_url("https://EXAMPLE.com:443/p"),
+        Ok("https://example.com/p".to_owned())
+    );
+    assert_eq!(
+        sanitize_url("http://example.com:8080/p"),
+        Ok("http://example.com:8080/p".to_owned())
+    );
+}
+
+#[test]
+fn encodes_percent_escapes_already_in_the_path_again() {
+    assert_eq!(
+        sanitize_url("https://example.com/a%2Fb/%7Euser"),
+        Ok("https://example.com/a%252Fb/%257Euser".to_owned())
+    );
+}
