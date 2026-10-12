@@ -4,14 +4,16 @@ use serde_json::Value;
 
 use crate::mcp_auth_config::{config_dir, config_file_path};
 
+/// How console.log prints an extra value: strings as they are, anything else as JSON.
+fn render_value(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
+}
+
 pub fn format_debug_log_entry(formatted_message: &str, args: &[Value]) -> String {
-    let rendered_args: Vec<String> = args
-        .iter()
-        .map(|arg| match arg {
-            Value::String(text) => text.clone(),
-            other => other.to_string(),
-        })
-        .collect();
+    let rendered_args: Vec<String> = args.iter().map(render_value).collect();
     format!("{formatted_message} {}\n", rendered_args.join(" "))
 }
 
@@ -152,10 +154,7 @@ fn write_log_line(console: &mut impl Write, message: &str, rest: &[Value]) {
     let mut line = format_log_line(std::process::id(), message);
     for value in rest {
         line.push(' ');
-        match value {
-            Value::String(text) => line.push_str(text),
-            other => line.push_str(&other.to_string()),
-        }
+        line.push_str(&render_value(value));
     }
     line.push('\n');
     let _ = console.write_all(line.as_bytes());
