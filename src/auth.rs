@@ -1103,7 +1103,7 @@ async fn read_json(response: Response) -> Result<Value, AuthError> {
     serde_json::from_str(&text).map_err(|error| AuthError::Other(format!("SyntaxError: {error}")))
 }
 
-fn schema_error(message: String) -> AuthError {
+fn schema_error(message: &str) -> AuthError {
     AuthError::Other(format!("ZodError: {message}"))
 }
 
@@ -1144,14 +1144,14 @@ fn check_object(
     strip: bool,
 ) -> Result<Value, AuthError> {
     let Some(object) = value.as_object() else {
-        return Err(schema_error("expected object".to_owned()));
+        return Err(schema_error("expected object"));
     };
     let mut out = if strip { Map::new() } else { object.clone() };
     for &(name, check, required) in rules {
         let field = object.get(name);
         let Some(field) = field else {
             if required {
-                return Err(schema_error(format!("\"{name}\" is required")));
+                return Err(schema_error(&format!("\"{name}\" is required")));
             }
             continue;
         };
@@ -1189,7 +1189,7 @@ fn check_object(
             Some(checked) => {
                 out.insert(name.to_owned(), checked);
             }
-            None => return Err(schema_error(format!("invalid value at \"{name}\""))),
+            None => return Err(schema_error(&format!("invalid value at \"{name}\""))),
         }
     }
     Ok(Value::Object(out))
