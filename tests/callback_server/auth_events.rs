@@ -1,4 +1,4 @@
-//! The process-wide AuthEvents emitter the callback servers share.
+//! The process-wide `AuthEvents` emitter the callback servers share.
 
 use rust_mcp_remote::callback_server::{AuthEvent, AuthEvents};
 use tokio::sync::broadcast::error::TryRecvError;

@@ -29,10 +29,10 @@ pub type TokenFn = Arc<dyn Fn() -> BoxFuture<Result<Option<String>, String>> + S
 
 const MAX_REDIRECTS: usize = 5;
 
-/// The SDK's DEFAULT_MAX_STEP_UP_RETRIES.
+/// The SDK's `DEFAULT_MAX_STEP_UP_RETRIES`.
 const DEFAULT_MAX_STEP_UP_RETRIES: u32 = 1;
 
-/// What the transport needs from an OAuthClientProvider: the SDK's `adaptOAuthProvider`
+/// What the transport needs from an `OAuthClientProvider`: the SDK's `adaptOAuthProvider`
 /// (the bearer token and the `onUnauthorized` run of `auth()`), plus the provider itself
 /// for `finishAuth` and the 403 step-up.
 pub trait TransportOAuth: Send + Sync {
@@ -100,7 +100,7 @@ pub struct StreamableHttpOptions {
     /// A minimal auth provider (just `token()`): a 401 then fails with
     /// `TransportError::Unauthorized`.
     pub token: Option<TokenFn>,
-    /// An OAuthClientProvider: a 401 runs `auth()` and retries once, a 403
+    /// An `OAuthClientProvider`: a 401 runs `auth()` and retries once, a 403
     /// `insufficient_scope` steps the scope up, and `finish_auth` redeems a code.
     /// Takes the place of `token`.
     pub oauth: Option<Arc<dyn TransportOAuth>>,
@@ -112,14 +112,14 @@ pub struct StreamableHttpOptions {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TransportError {
-    /// The SDK's UnauthorizedError.
+    /// The SDK's `UnauthorizedError`.
     Unauthorized(String),
-    /// The SDK's SdkHttpError.
+    /// The SDK's `SdkHttpError`.
     Http {
         status: u16,
         message: String,
     },
-    /// The SDK's InsufficientScopeError: a 403 step-up with no OAuth provider to run it.
+    /// The SDK's `InsufficientScopeError`: a 403 step-up with no OAuth provider to run it.
     InsufficientScope {
         required_scope: Option<String>,
         resource_metadata_url: Option<String>,
@@ -161,9 +161,9 @@ pub struct HttpSettings {
     pub body_timeout: Option<Duration>,
     pub headers_timeout: Option<Duration>,
     pub force_ipv4: bool,
-    /// `--enable-proxy`: use the HTTP_PROXY/HTTPS_PROXY environment variables.
+    /// `--enable-proxy`: use the `HTTP_PROXY`/`HTTPS_PROXY` environment variables.
     pub use_env_proxy: bool,
-    /// The certificates NODE_EXTRA_CA_CERTS names, trusted alongside the platform's own.
+    /// The certificates `NODE_EXTRA_CA_CERTS` names, trusted alongside the platform's own.
     pub extra_root_certificates: Vec<reqwest::Certificate>,
 }
 
@@ -223,7 +223,7 @@ pub fn client_builder() -> reqwest::ClientBuilder {
 #[derive(Debug)]
 pub enum SendFailure {
     Request(reqwest::Error),
-    /// undici's UND_ERR_HEADERS_TIMEOUT.
+    /// undici's `UND_ERR_HEADERS_TIMEOUT`.
     HeadersTimeout,
 }
 
@@ -524,7 +524,7 @@ struct Inner {
 }
 
 /// Client transport for Streamable HTTP, ported from the SDK v2
-/// StreamableHTTPClientTransport: messages go out as POSTs, and responses come
+/// `StreamableHTTPClientTransport`: messages go out as POSTs, and responses come
 /// back as JSON or as an SSE stream; a standalone GET stream opens after the
 /// `notifications/initialized` POST.
 ///

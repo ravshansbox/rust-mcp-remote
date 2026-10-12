@@ -6,8 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Serializes tests that change process-wide state (environment variables, logging flags).
 pub static GLOBAL_STATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Runs an async test on its own runtime with MCP_REMOTE_CONFIG_DIR pointing at a fresh
-/// directory, holding GLOBAL_STATE throughout.
+/// Runs an async test on its own runtime with `MCP_REMOTE_CONFIG_DIR` pointing at a fresh
+/// directory, holding `GLOBAL_STATE` throughout.
 pub fn run_in_config_dir<F: Future>(prefix: &str, test: impl FnOnce() -> F) -> F::Output {
     let _guard = GLOBAL_STATE
         .lock()

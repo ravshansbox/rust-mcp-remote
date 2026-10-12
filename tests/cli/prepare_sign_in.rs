@@ -9,7 +9,7 @@ use serde_json::json;
 
 use crate::test_server::{RecordedRequest, reply, serve};
 
-/// Serializes the tests: each points MCP_REMOTE_CONFIG_DIR at its own directory.
+/// Serializes the tests: each points `MCP_REMOTE_CONFIG_DIR` at its own directory.
 static CONFIG_DIR: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn in_config_dir<T>(test: impl AsyncFnOnce() -> T) -> T {

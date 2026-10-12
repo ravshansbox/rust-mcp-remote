@@ -1,7 +1,7 @@
 //! A port of the SDK v2 OAuth client flow (`src/client/auth.ts` in @modelcontextprotocol/client):
 //! metadata discovery, dynamic client registration, the PKCE authorization request, token
 //! exchange and refresh, and the `auth()` orchestrator that ties them together. Metadata, client
-//! information and tokens stay serde_json values, checked against the SDK's zod schemas by hand.
+//! information and tokens stay `serde_json` values, checked against the SDK's zod schemas by hand.
 //! DPoP is left out: mcp-remote's provider never supplies a `dpop()` hook.
 
 use std::future::Future;
@@ -38,7 +38,7 @@ pub enum IssuerMismatchKind {
 /// The errors `auth()` and its helpers throw, one variant per SDK error class.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AuthError {
-    /// OAuthError: an error response from the authorization server.
+    /// `OAuthError`: an error response from the authorization server.
     OAuth {
         code: String,
         message: String,
@@ -60,7 +60,7 @@ pub enum AuthError {
         current: String,
     },
     Unauthorized(String),
-    /// A request that never got a response: the TypeError discovery passes on instead of falling back.
+    /// A request that never got a response: the `TypeError` discovery passes on instead of falling back.
     Network(String),
     Other(String),
 }
@@ -138,7 +138,7 @@ pub struct DiscoveryState {
 }
 
 impl DiscoveryState {
-    /// Reads the camelCase object NodeOAuthClientProvider::discovery_state returns.
+    /// Reads the camelCase object `NodeOAuthClientProvider::discovery_state` returns.
     pub fn from_value(value: &Value) -> Option<Self> {
         Some(Self {
             authorization_server_url: value.get("authorizationServerUrl")?.as_str()?.to_owned(),
@@ -158,7 +158,7 @@ pub enum AuthResult {
     Redirect,
 }
 
-/// The SDK's OAuthClientProvider. Optional TypeScript members are default methods, and a
+/// The SDK's `OAuthClientProvider`. Optional TypeScript members are default methods, and a
 /// `can_*`/`has_*` method answers whether the provider implements one where the SDK checks.
 pub trait OAuthClientProvider: Send + Sync {
     fn redirect_url(&self) -> Option<String>;
@@ -478,7 +478,7 @@ pub fn resolve_client_metadata<P: OAuthClientProvider>(provider: &P) -> Value {
     metadata
 }
 
-/// An OAuthError from an error response body, or a server_error that quotes the body.
+/// An `OAuthError` from an error response body, or a `server_error` that quotes the body.
 pub fn parse_error_response(status: Option<u16>, body: &str) -> AuthError {
     let parsed = serde_json::from_str::<Value>(body)
         .map_err(|error| format!("SyntaxError: {error}"))
@@ -561,7 +561,7 @@ pub async fn auth<P: OAuthClientProvider>(
 }
 
 /// The requested scope, else the resource's advertised scopes, else the client's, plus
-/// offline_access when the server offers it and the client can refresh.
+/// `offline_access` when the server offers it and the client can refresh.
 pub fn determine_scope(
     requested_scope: Option<&str>,
     resource_metadata: Option<&Value>,
@@ -1125,7 +1125,7 @@ enum Check {
     String,
     Url,
     SafeUrl,
-    /// A SafeUrl where an empty string reads as absent.
+    /// A `SafeUrl` where an empty string reads as absent.
     OptionalSafeUrl,
     Strings,
     SafeUrls,
@@ -1744,7 +1744,7 @@ pub fn start_authorization(
     Ok((authorization_url, code_verifier))
 }
 
-/// The form parameters of an authorization_code grant.
+/// The form parameters of an `authorization_code` grant.
 pub fn prepare_authorization_code_request(
     authorization_code: &str,
     code_verifier: &str,
@@ -1917,7 +1917,7 @@ pub struct FetchTokenOptions<'a> {
     pub fetch: Option<&'a FetchFn>,
 }
 
-/// Fetches tokens with the grant the provider prepares, or the authorization_code grant.
+/// Fetches tokens with the grant the provider prepares, or the `authorization_code` grant.
 pub async fn fetch_token<P: OAuthClientProvider>(
     provider: &P,
     authorization_server_url: &str,

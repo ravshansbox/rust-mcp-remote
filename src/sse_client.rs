@@ -1,6 +1,6 @@
-//! The SDK's (deprecated) SSEClientTransport: messages come in over a Server-Sent Events stream
+//! The SDK's (deprecated) `SSEClientTransport`: messages come in over a Server-Sent Events stream
 //! opened with a GET, and go out as POSTs to the endpoint the stream's first `endpoint` event
-//! names. The stream behaves like the `eventsource` package's EventSource the SDK opens it with:
+//! names. The stream behaves like the `eventsource` package's `EventSource` the SDK opens it with:
 //! a 3 s reconnect delay a `retry:` field can change, a reconnect after the stream ends or the
 //! request fails, and no reconnect after a non-200 status, a 204 or a body that is not an event
 //! stream.
@@ -26,7 +26,7 @@ use crate::streamable_http::{
     fetch_within_origin, parse_jsonrpc_message, set_header, unfollowed_redirect,
 };
 
-/// The EventSource's reconnect delay until the stream sets another with `retry:`.
+/// The `EventSource`'s reconnect delay until the stream sets another with `retry:`.
 const DEFAULT_RECONNECT_INTERVAL_MS: u64 = 3_000;
 
 #[derive(Clone, Default)]
@@ -37,7 +37,7 @@ pub struct SseClientOptions {
     pub fetch: Option<FetchFn>,
     /// `eventSourceInit.fetch`: opens the stream; `fetch` does when it is unset.
     pub event_source_fetch: Option<FetchFn>,
-    /// An OAuthClientProvider: a 401 runs `auth()` and tries again, and `finish_auth`
+    /// An `OAuthClientProvider`: a 401 runs `auth()` and tries again, and `finish_auth`
     /// redeems a code.
     pub oauth: Option<Arc<dyn TransportOAuth>>,
     pub skip_issuer_metadata_validation: bool,
@@ -64,7 +64,7 @@ struct Inner {
     tasks: Mutex<Vec<AbortHandle>>,
 }
 
-/// Client transport for SSE, ported from the SDK's SSEClientTransport.
+/// Client transport for SSE, ported from the SDK's `SSEClientTransport`.
 #[derive(Clone)]
 pub struct SseClientTransport {
     inner: Arc<Inner>,
@@ -258,7 +258,7 @@ impl Inner {
         options
     }
 
-    /// Takes the resource_metadata URL and scope from a 401's challenge (both are cleared when
+    /// Takes the `resource_metadata` URL and scope from a 401's challenge (both are cleared when
     /// it has none).
     fn record_challenge(&self, header: Option<&str>) {
         let challenge = extract_www_authenticate_params(header);
@@ -278,7 +278,7 @@ impl Inner {
         Ok(())
     }
 
-    /// The EventSource, reopened after a 401 the way `_authThenStart` opens a new one.
+    /// The `EventSource`, reopened after a 401 the way `_authThenStart` opens a new one.
     /// `ready` settles `start()`: it resolves on the `endpoint` event and rejects on the first
     /// error, and later errors only reach the event channel.
     async fn run_event_source(self: Arc<Self>, mut ready: Ready) {

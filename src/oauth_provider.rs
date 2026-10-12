@@ -1,7 +1,7 @@
-//! The async face of NodeOAuthClientProvider: the `auth::OAuthClientProvider` the ported SDK
+//! The async face of `NodeOAuthClientProvider`: the `auth::OAuthClientProvider` the ported SDK
 //! `auth()` drives. The synchronous provider keeps the state and the file store; this adds the
 //! parts of node-oauth-client-provider.ts that talk to the network (the proactive refresh, the
-//! client_credentials renewal, the browser, device and client_credentials sign-ins).
+//! `client_credentials` renewal, the browser, device and `client_credentials` sign-ins).
 
 use std::future::Future;
 use std::pin::Pin;
@@ -50,7 +50,7 @@ pub struct OAuthProvider {
 }
 
 impl OAuthProvider {
-    /// `fetch` is what a client_credentials renewal hands to `auth()`, as `options.fetchFn` does.
+    /// `fetch` is what a `client_credentials` renewal hands to `auth()`, as `options.fetchFn` does.
     pub fn new(provider: NodeOAuthClientProvider, fetch: Option<FetchFn>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(provider)),

@@ -1,4 +1,4 @@
-//! A port of explicit-client-credentials.test.ts: the client_credentials grant against an
+//! A port of explicit-client-credentials.test.ts: the `client_credentials` grant against an
 //! explicit token endpoint, driven through the Client, the streamable HTTP transport and the
 //! real provider, with an MCP server whose discovery URLs all redirect to an enterprise login.
 
@@ -59,7 +59,7 @@ struct McpRequest {
     bearer: Option<String>,
 }
 
-/// The TestNetwork: the token endpoint, the MCP server, and a discovery redirect for every
+/// The `TestNetwork`: the token endpoint, the MCP server, and a discovery redirect for every
 /// other URL.
 #[derive(Default)]
 struct NetworkState {

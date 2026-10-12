@@ -29,7 +29,7 @@ pub struct AuthCodeResult {
     pub iss: Option<String>,
 }
 
-/// What the TS code emits on its EventEmitter.
+/// What the TS code emits on its `EventEmitter`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthEvent {
     /// 'auth-code-received' (code, state)

@@ -88,7 +88,7 @@ pub fn client_credentials_request_debug_details(
     Value::Object(details)
 }
 
-/// Signs in as the software itself with the client_credentials grant.
+/// Signs in as the software itself with the `client_credentials` grant.
 pub async fn authorize_with_client_credentials(
     metadata: &Value,
     client_information: &Value,

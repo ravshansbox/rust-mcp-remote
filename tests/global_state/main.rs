@@ -10,7 +10,7 @@ pub fn console_text(console: Vec<u8>) -> String {
     String::from_utf8(console).expect("utf8")
 }
 
-/// Runs `action` with GLOBAL_STATE held and MCP_REMOTE_CONFIG_DIR pointing at a
+/// Runs `action` with `GLOBAL_STATE` held and `MCP_REMOTE_CONFIG_DIR` pointing at a
 /// fresh temporary directory, then removes the directory and resets the logging flags.
 pub fn with_temporary_config_dir<T>(action: impl FnOnce() -> T) -> T {
     let _guard = GLOBAL_STATE

@@ -85,7 +85,7 @@ pub fn encode_mcp_header_value(value: &str) -> String {
 /// a fallback, a re-authorization or a reconnected stream; the jar keys them by origin.
 static COOKIE_JAR: LazyLock<Mutex<CookieJar>> = LazyLock::new(|| Mutex::new(CookieJar::new()));
 
-/// COOKIES_ENABLED: whether to take part in cookie-based session stickiness. See
+/// `COOKIES_ENABLED`: whether to take part in cookie-based session stickiness. See
 /// `--disable-cookies`.
 static COOKIES_ENABLED: AtomicBool = AtomicBool::new(true);
 

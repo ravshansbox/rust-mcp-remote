@@ -85,9 +85,9 @@ pub const OWN_ID_PREFIX: &str = "mcp-remote-";
 /// Why a send failed, kept as far as the proxy needs to tell the cases apart.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SendError {
-    /// The SDK's UnauthorizedError.
+    /// The SDK's `UnauthorizedError`.
     Unauthorized(String),
-    /// The SDK's SdkHttpError.
+    /// The SDK's `SdkHttpError`.
     Http {
         status: u16,
         message: String,

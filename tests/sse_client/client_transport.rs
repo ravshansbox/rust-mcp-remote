@@ -1,4 +1,4 @@
-//! SseClientTransport against a real HTTP server that holds the event stream open.
+//! `SseClientTransport` against a real HTTP server that holds the event stream open.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

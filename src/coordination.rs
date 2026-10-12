@@ -75,7 +75,7 @@ pub enum CoordinationError {
     /// Binding the callback server failed in a way that is not ours to step over (code
     /// EADDRINUSE or EACCES with a pinned port, or anything else).
     CallbackServer(CallbackServerError),
-    /// Every candidate port was held by strangers (no_free_callback_port_message).
+    /// Every candidate port was held by strangers (`no_free_callback_port_message`).
     NoFreePort(String),
 }
 

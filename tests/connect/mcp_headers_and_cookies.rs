@@ -299,7 +299,7 @@ async fn a_header_the_user_pinned_is_not_overwritten_by_the_jar() {
 
 /// createSseServer: every stream it serves plants its own cookie and hands out a POST endpoint
 /// with a session of its own. The test server ends each stream once it is written, so a
-/// `retry` of 10 ms makes the EventSource come straight back for another.
+/// `retry` of 10 ms makes the `EventSource` come straight back for another.
 async fn sse_server(
     retry_ms: u64,
 ) -> (String, UnboundedReceiver<RecordedRequest>, Arc<AtomicUsize>) {

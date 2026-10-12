@@ -185,7 +185,7 @@ pub fn configure_network(args: &CommandLineArgs) {
     });
 }
 
-/// The certificates in the file NODE_EXTRA_CA_CERTS names. Like Node, a file that cannot be
+/// The certificates in the file `NODE_EXTRA_CA_CERTS` names. Like Node, a file that cannot be
 /// loaded is reported and skipped rather than fatal.
 fn extra_root_certificates() -> Vec<reqwest::Certificate> {
     let Some(path) = std::env::var_os("NODE_EXTRA_CA_CERTS").filter(|path| !path.is_empty()) else {

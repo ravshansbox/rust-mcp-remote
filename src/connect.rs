@@ -38,7 +38,7 @@ const REASON_TRANSPORT_FALLBACK: &str = "falling-back-to-alternate-transport";
 const REASON_REJECTED_TOKEN: &str = "server-rejected-a-freshly-issued-token";
 const REASON_SIBLING_TOKENS: &str = "signed-in-by-another-instance";
 
-/// The SDK's DEFAULT_REQUEST_TIMEOUT_MSEC, which bounds the probe's `initialize`.
+/// The SDK's `DEFAULT_REQUEST_TIMEOUT_MSEC`, which bounds the probe's `initialize`.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Starts waiting for the authorization code; called only once a code is actually expected.
@@ -217,7 +217,7 @@ pub struct ConnectOptions {
     pub headers: Vec<(String, String)>,
     pub transport_strategy: TransportStrategy,
     pub protocol_mode: ProtocolMode,
-    /// NON_INTERACTIVE_FLOW: the sign-in needs no browser (device code, client credentials).
+    /// `NON_INTERACTIVE_FLOW`: the sign-in needs no browser (device code, client credentials).
     pub non_interactive_flow: bool,
 }
 
@@ -476,7 +476,7 @@ fn no_events() -> UnboundedReceiver<TransportEvent> {
 }
 
 /// One connection attempt. A failure carries the transport that received the challenge, so the
-/// code can be redeemed on the transport that stored its resource_metadata URL.
+/// code can be redeemed on the transport that stored its `resource_metadata` URL.
 async fn attempt(
     url: &Url,
     auth: &dyn RemoteAuth,

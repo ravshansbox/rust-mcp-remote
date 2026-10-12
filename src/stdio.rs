@@ -104,7 +104,7 @@ impl<W> ServerInner<W> {
 
 /// Server transport for stdio: reads newline-delimited JSON-RPC from `reader`
 /// (stdin) and writes to `writer` (stdout). It closes itself when the reader
-/// reaches end-of-file, like the SDK v2 StdioServerTransport.
+/// reaches end-of-file, like the SDK v2 `StdioServerTransport`.
 pub struct StdioServerTransport<W> {
     inner: Arc<ServerInner<W>>,
 }

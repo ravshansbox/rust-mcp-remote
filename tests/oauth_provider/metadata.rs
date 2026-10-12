@@ -1,4 +1,4 @@
-//! OAuthProvider::get_authorization_server_metadata: it fetches the metadata once and then
+//! `OAuthProvider::get_authorization_server_metadata`: it fetches the metadata once and then
 //! answers from the cache, but keeps asking while nothing has been found.
 
 use std::sync::Arc;

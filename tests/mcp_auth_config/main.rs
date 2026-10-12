@@ -3,7 +3,7 @@
 /// Serializes tests that change process-wide state (environment variables, logging flags).
 pub static GLOBAL_STATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Runs `action` with MCP_REMOTE_CONFIG_DIR pointing at a fresh temporary directory, removed afterwards.
+/// Runs `action` with `MCP_REMOTE_CONFIG_DIR` pointing at a fresh temporary directory, removed afterwards.
 pub fn with_temporary_config_dir<T>(action: impl FnOnce() -> T) -> T {
     let _guard = GLOBAL_STATE
         .lock()
