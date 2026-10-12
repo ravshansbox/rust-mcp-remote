@@ -501,11 +501,6 @@ pub fn unfollowed_redirect(url: &Url, response: &Response) -> Option<String> {
     Some(format!("{text} (redirectPolicy: 'same-origin')"))
 }
 
-struct StreamOptions {
-    resumption_token: Option<String>,
-    replay_message_id: Option<Value>,
-}
-
 struct Inner {
     url: Url,
     headers: Vec<(String, String)>,
@@ -654,14 +649,7 @@ impl StreamableHttpClientTransport {
     /// Opens a GET stream that replays the events after `last_event_id`.
     pub async fn resume_stream(&self, last_event_id: &str) -> Result<(), TransportError> {
         Arc::clone(&self.inner)
-            .start_or_auth_sse(
-                StreamOptions {
-                    resumption_token: Some(last_event_id.to_owned()),
-                    replay_message_id: None,
-                },
-                false,
-                0,
-            )
+            .start_or_auth_sse(Some(last_event_id.to_owned()), false, 0)
             .await
     }
 
@@ -1012,16 +1000,7 @@ impl Inner {
             if is_message_with_method(message, "notifications/initialized") {
                 let inner = Arc::clone(&self);
                 self.spawn(async move {
-                    let _ = inner
-                        .start_or_auth_sse(
-                            StreamOptions {
-                                resumption_token: None,
-                                replay_message_id: None,
-                            },
-                            false,
-                            0,
-                        )
-                        .await;
+                    let _ = inner.start_or_auth_sse(None, false, 0).await;
                 });
             }
             return Ok(());
@@ -1039,14 +1018,7 @@ impl Inner {
             .map(str::to_owned);
         match media_type_essence(content_type.as_deref()).as_deref() {
             Some("text/event-stream") => {
-                Arc::clone(&self).handle_sse_stream(
-                    response,
-                    StreamOptions {
-                        resumption_token: None,
-                        replay_message_id: None,
-                    },
-                    false,
-                );
+                Arc::clone(&self).handle_sse_stream(response, false);
                 Ok(())
             }
             Some("application/json") => {
@@ -1080,7 +1052,7 @@ impl Inner {
 
     fn start_or_auth_sse(
         self: Arc<Self>,
-        options: StreamOptions,
+        resumption_token: Option<String>,
         is_auth_retry: bool,
         step_up_retries: u32,
     ) -> BoxFuture<Result<(), TransportError>> {
@@ -1088,7 +1060,7 @@ impl Inner {
             let result = async {
                 let mut headers = self.common_headers().await?;
                 merge_accept(&mut headers, &["text/event-stream"]);
-                if let Some(token) = &options.resumption_token {
+                if let Some(token) = &resumption_token {
                     set_header(&mut headers, "last-event-id", token);
                 }
                 let response = self.fetch_within_origin(Method::GET, headers, None).await?;
@@ -1102,7 +1074,7 @@ impl Inner {
                             self.on_unauthorized(&oauth, &response).await?;
                             let _ = response.bytes().await;
                             return Arc::clone(&self)
-                                .start_or_auth_sse(options, true, step_up_retries)
+                                .start_or_auth_sse(resumption_token, true, step_up_retries)
                                 .await;
                         }
                         let _ = response.bytes().await;
@@ -1119,7 +1091,11 @@ impl Inner {
                             let _ = response.bytes().await;
                             self.step_up_authorize(challenge, step_up_retries).await?;
                             return Arc::clone(&self)
-                                .start_or_auth_sse(options, is_auth_retry, step_up_retries + 1)
+                                .start_or_auth_sse(
+                                    resumption_token,
+                                    is_auth_retry,
+                                    step_up_retries + 1,
+                                )
                                 .await;
                         }
                     }
@@ -1134,7 +1110,7 @@ impl Inner {
                         message: format!("Failed to open SSE stream: {reason}"),
                     });
                 }
-                Arc::clone(&self).handle_sse_stream(response, options, true);
+                Arc::clone(&self).handle_sse_stream(response, true);
                 Ok(())
             }
             .await;
@@ -1155,7 +1131,7 @@ impl Inner {
         delay.min(options.max_reconnection_delay_ms as f64) as u64
     }
 
-    fn schedule_reconnection(self: Arc<Self>, options: StreamOptions, attempt: u32) {
+    fn schedule_reconnection(self: Arc<Self>, resumption_token: Option<String>, attempt: u32) {
         let max_retries = self.reconnection.max_retries;
         if attempt >= max_retries {
             self.emit_error(format!(
@@ -1170,26 +1146,20 @@ impl Inner {
             if inner.closed.load(Ordering::SeqCst) {
                 return;
             }
-            let retry = StreamOptions {
-                resumption_token: options.resumption_token.clone(),
-                replay_message_id: options.replay_message_id.clone(),
-            };
-            if let Err(error) = Arc::clone(&inner).start_or_auth_sse(retry, false, 0).await {
+            if let Err(error) = Arc::clone(&inner)
+                .start_or_auth_sse(resumption_token.clone(), false, 0)
+                .await
+            {
                 if inner.closed.load(Ordering::SeqCst) {
                     return;
                 }
                 inner.emit_error(format!("Failed to reconnect SSE stream: {error}"));
-                inner.schedule_reconnection(options, attempt + 1);
+                inner.schedule_reconnection(resumption_token, attempt + 1);
             }
         });
     }
 
-    fn handle_sse_stream(
-        self: Arc<Self>,
-        mut response: Response,
-        options: StreamOptions,
-        is_reconnectable: bool,
-    ) {
+    fn handle_sse_stream(self: Arc<Self>, mut response: Response, is_reconnectable: bool) {
         let inner = Arc::clone(&self);
         self.spawn(async move {
             let mut parser = EventSourceParser::new();
@@ -1227,12 +1197,9 @@ impl Inner {
                         .map_err(|error| error.to_string())
                         .and_then(parse_jsonrpc_message);
                     match parsed {
-                        Ok(mut message) => {
+                        Ok(message) => {
                             if is_response(&message) {
                                 received_response = true;
-                                if let Some(id) = &options.replay_message_id {
-                                    message["id"] = id.clone();
-                                }
                             }
                             inner.emit(TransportEvent::Message(message));
                         }
@@ -1247,13 +1214,7 @@ impl Inner {
                 inner.emit_error(format!("SSE stream disconnected: {error}"));
             }
             if (is_reconnectable || has_priming_event) && !received_response {
-                Arc::clone(&inner).schedule_reconnection(
-                    StreamOptions {
-                        resumption_token: last_event_id,
-                        replay_message_id: options.replay_message_id,
-                    },
-                    0,
-                );
+                Arc::clone(&inner).schedule_reconnection(last_event_id, 0);
             }
         });
     }
